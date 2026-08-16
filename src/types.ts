@@ -3,8 +3,29 @@
 export type ApiMode = 'images' | 'responses'
 export const REASONING_EFFORT_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 export type ReasoningEffort = typeof REASONING_EFFORT_VALUES[number]
-export type AppMode = 'gallery' | 'agent'
+export type AppMode = 'gallery' | 'agent' | 'prompt-library'
 export type AgentApiConfigMode = 'off' | 'native' | 'hybrid'
+
+export interface PromptTemplate {
+  id: string
+  title: string
+  prompt: string
+  description?: string
+  coverUrl?: string
+  referenceImageUrls?: string[]
+  tags?: string[]
+  sourceId?: string
+}
+
+export interface PromptSource {
+  id: string
+  name: string
+  jsonUrl: string
+  homepageUrl?: string
+  enabled: boolean
+  templates: PromptTemplate[]
+  lastFetchedAt?: number
+}
 export const ZIP_DOWNLOAD_ROUTE_VALUES = [
   'task-selection',
   'favorite-collection-selection',
@@ -15,7 +36,7 @@ export const ZIP_DOWNLOAD_ROUTE_VALUES = [
 ] as const
 export type ZipDownloadRoute = typeof ZIP_DOWNLOAD_ROUTE_VALUES[number]
 export const DEFAULT_ZIP_DOWNLOAD_ROUTES: ZipDownloadRoute[] = ['task-selection', 'favorite-collection-selection']
-export type BuiltInApiProvider = 'openai' | 'fal'
+export type BuiltInApiProvider = 'openai' | 'fal' | 'gemini'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -71,6 +92,7 @@ export interface CustomProviderDefinition {
 export interface ApiProfile {
   id: string
   name: string
+  managedBy?: 'managed'
   provider: ApiProvider
   baseUrl: string
   apiKey: string

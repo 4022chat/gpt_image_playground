@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentConversation, AppSettings, FavoriteCollection } from '../types'
+import type { AgentConversation, AppSettings, FavoriteCollection, PromptSource } from '../types'
 import { DEFAULT_PARAMS } from '../types'
 import { DEFAULT_SETTINGS } from './apiProfiles'
 import { DEFAULT_FAVORITE_COLLECTION_ID } from './favoriteState'
@@ -192,6 +192,38 @@ describe('persisted state codec', () => {
     expect(disabled.galleryInputDraft).toBeNull()
     expect(disabled.agentInputDrafts).toEqual({})
     expect(JSON.stringify(withLegacyConversation.agentConversations)).not.toContain('legacy-conversation-base64')
+  })
+
+  it('persists and normalizes prompt sources with their templates', () => {
+    const promptSources: PromptSource[] = [{
+      id: 'source-a',
+      name: '来源 A',
+      jsonUrl: 'https://example.com/prompts.json',
+      homepageUrl: 'https://example.com',
+      enabled: true,
+      templates: [{ id: 'template-a', title: '模板 A', prompt: '提示词 A', sourceId: 'wrong-source' }],
+    }]
+    const persisted = createPersistedState({ ...source(), promptSources })
+    const result = normalizePersistedState({
+      promptSources: [
+        {
+          ...promptSources[0],
+          templates: [
+            ...promptSources[0].templates,
+            { id: 'invalid-template', title: '无效模板' },
+          ],
+        },
+        { id: 'invalid-source', name: '无效来源' },
+      ],
+    }, { ...fallback(), promptSources }, 100)!
+    const fallbackResult = normalizePersistedState({}, { ...fallback(), promptSources }, 100)!
+
+    expect(persisted.promptSources).toEqual(promptSources)
+    expect(result.state.promptSources).toEqual([{
+      ...promptSources[0],
+      templates: [{ ...promptSources[0].templates[0], sourceId: promptSources[0].id }],
+    }])
+    expect(fallbackResult.state.promptSources).toEqual(promptSources)
   })
 
   it('does not restore Agent drafts or legacy top-level input when input persistence is disabled', () => {

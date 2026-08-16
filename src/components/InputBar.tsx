@@ -16,6 +16,7 @@ import { getContentEditableCursor, getContentEditablePlainText, getContentEditab
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
 import SizePickerModal from './SizePickerModal'
+import Select from './Select'
 import { CloseIcon, CollapseIcon, ExpandIcon } from './icons'
 import ButtonTooltip from './input/buttonTooltip'
 import DragUploadOverlay from './input/dragUploadOverlay'
@@ -93,6 +94,7 @@ export default function InputBar() {
   const params = useStore((s) => s.params)
   const setParams = useStore((s) => s.setParams)
   const settings = useStore((s) => s.settings)
+  const setSettings = useStore((s) => s.setSettings)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
@@ -437,6 +439,24 @@ export default function InputBar() {
     ? maskDraft ? '遮罩编辑' : '生成图像'
     : '请先配置 API'
   const submitTooltipText = activeAgentIsRunning ? '停止生成' : '尚未完成 API 配置，请在右上角设置中进行'
+  const selectableProfiles = settings.profiles.filter((profile) => profile.apiMode === (appMode === 'agent' ? 'responses' : 'images'))
+  const profileOptions = selectableProfiles.map((profile) => ({
+    label: `${profile.model}(${profile.name})`,
+    value: profile.id,
+  }))
+  const selectedProfile = selectableProfiles.some((profile) => profile.id === activeProfile.id)
+    ? activeProfile
+    : selectableProfiles[0] ?? activeProfile
+
+  useEffect(() => {
+    if (selectedProfile.id !== activeProfile.id) setSettings({ activeProfileId: selectedProfile.id })
+  }, [activeProfile.id, selectedProfile.id, setSettings])
+
+  const switchProfile = (value: string | number) => {
+    const profileId = String(value)
+    setSettings({ activeProfileId: profileId })
+    useStore.getState().setReusedTaskApiProfile(null)
+  }
   const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
@@ -1762,6 +1782,16 @@ export default function InputBar() {
             <div className="hidden sm:flex items-end justify-between gap-3">
               {renderParams('grid-cols-6')}
 
+              <div className="w-48 shrink-0 mb-0.5">
+                <Select
+                  value={selectedProfile.id}
+                  onChange={switchProfile}
+                  options={profileOptions}
+                  showValueTooltips
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm text-gray-700 dark:text-gray-200 outline-none"
+                />
+              </div>
+
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
                 <div
                   className="relative"
@@ -1820,6 +1850,15 @@ export default function InputBar() {
               <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
                 <div className="collapse-inner">
                   {renderParams('grid-cols-2')}
+                  <div className="mt-2">
+                    <Select
+                      value={selectedProfile.id}
+                      onChange={switchProfile}
+                      options={profileOptions}
+                      showValueTooltips
+                      className="w-full px-3 py-2.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm text-gray-700 dark:text-gray-200 outline-none"
+                    />
+                  </div>
                   <div className="h-2" />
                 </div>
               </div>

@@ -14,6 +14,8 @@ import type {
   MaskDraft,
   TaskRecord,
   FavoriteCollection,
+  PromptSource,
+  PromptTemplate,
   ResponsesOutputItem,
   StoredImage,
   StoredImageThumbnail,
@@ -83,6 +85,80 @@ const AGENT_STOPPED_MESSAGE = '已停止生成。'
 const AGENT_RECOVERY_PAUSE_ERROR = 'AgentRecoveryPauseError'
 const AGENT_CONVERSATION_TITLE_MAX_LENGTH = 28
 const ERROR_TOAST_MAX_LENGTH = 80
+const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
+  {
+    id: 'zaoju-expression',
+    name: '漫剧表情演技',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/expressions.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: true,
+    templates: [],
+  },
+  {
+    id: 'zaoju-action',
+    name: '漫剧动作招式',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/action.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: false,
+    templates: [],
+  },
+  {
+    id: 'zaoju-finisher',
+    name: '漫剧术法大招',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/finisher.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: false,
+    templates: [],
+  },
+  {
+    id: 'zaoju-ancient-outfit',
+    name: '漫剧古风服饰',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/ancient-outfits.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: false,
+    templates: [],
+  },
+  {
+    id: 'zaoju-modern-outfit',
+    name: '漫剧现代服饰',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/modern-outfits.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: false,
+    templates: [],
+  },
+  {
+    id: 'zaoju-character-hairstyles',
+    name: '漫剧角色发型',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/character-hairstyles.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: false,
+    templates: [],
+  },
+  {
+    id: 'zaoju-props',
+    name: '漫剧关键道具',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/props.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: false,
+    templates: [],
+  },
+  {
+    id: 'zaoju-scene',
+    name: '漫剧场景空间',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/4022chat/zaoju-prompt@main/src/data/catalog/scene.json',
+    homepageUrl: 'https://www.zaoju.vip',
+    enabled: false,
+    templates: [],
+  },
+  {
+    id: 'gpt-image-2-examples',
+    name: 'GPT-IMAGE-2 案例',
+    jsonUrl: 'https://cdn.jsdelivr.net/gh/junxiaopang/all-image-prompts@main/src/data/chatgpt.json',
+    homepageUrl: 'https://prompts.kkkm.cn',
+    enabled: true,
+    templates: [],
+  }
+]
 type ToastType = 'info' | 'success' | 'error'
 type AgentDeletionResult = 'deleted' | 'deleted-with-warning' | 'running' | 'not-found'
 
@@ -295,6 +371,17 @@ interface AppState {
   setMaskEditorImageId: (id: string | null) => void
   galleryInputDraft: AgentInputDraft | null
 
+  // 提示词库
+  promptLibraryModalOpen: boolean
+  setPromptLibraryModalOpen: (open: boolean) => void
+  promptSources: PromptSource[]
+  addPromptSource: (source: Omit<PromptSource, 'id' | 'templates' | 'lastFetchedAt'>) => void
+  updatePromptSource: (id: string, source: Partial<Pick<PromptSource, 'name' | 'jsonUrl' | 'homepageUrl' | 'enabled'>>) => void
+  deletePromptSource: (id: string) => void
+  restoreDefaultPromptSources: () => void
+  setPromptSourceEnabled: (id: string, enabled: boolean) => void
+  setPromptSourceTemplates: (id: string, templates: PromptTemplate[], lastFetchedAt?: number) => void
+
   // 参数
   params: TaskParams
   setParams: (p: Partial<TaskParams>) => void
@@ -373,6 +460,8 @@ interface AppState {
   lightboxImageList: string[]
   setLightboxImageId: (id: string | null, list?: string[]) => void
   showSettings: boolean
+  managedApiKeyModalOpen: boolean
+  setManagedApiKeyModalOpen: (open: boolean) => void
   settingsTabRequest: SettingsTab | null
   setShowSettings: (v: boolean, tab?: SettingsTab) => void
   supportPromptOpen: boolean
@@ -481,6 +570,22 @@ export const useStore = create<AppState>()(
       // Mode
       appMode: 'gallery',
       setAppMode: (appMode) => {
+        if (appMode === 'prompt-library') {
+          const state = get()
+          const agentInputDrafts = saveActiveAgentInputDrafts(state)
+          const galleryInputDraft = saveGalleryInputDraft(state)
+          set({
+            appMode,
+            agentInputDrafts,
+            galleryInputDraft,
+            agentMobileHeaderVisible: true,
+            selectedTaskIds: [],
+            selectedFavoriteCollectionIds: [],
+            agentEditingRoundId: null,
+          })
+          return
+        }
+
         if (appMode === 'gallery') {
           const state = get()
           const agentInputDrafts = saveActiveAgentInputDrafts(state)
@@ -554,6 +659,10 @@ export const useStore = create<AppState>()(
           },
         })
       },
+
+      // Prompt library
+      promptLibraryModalOpen: false,
+      setPromptLibraryModalOpen: (promptLibraryModalOpen) => set({ promptLibraryModalOpen }),
 
       // Settings
       settings: { ...DEFAULT_SETTINGS },
@@ -685,6 +794,34 @@ export const useStore = create<AppState>()(
         set((s) => syncActiveInputDraft(s, { maskEditorImageId }))
       },
       galleryInputDraft: null,
+
+      // 提示词库
+      promptSources: DEFAULT_PROMPT_SOURCES.map((source) => ({ ...source, templates: [] })),
+      addPromptSource: (source) => set((state) => ({
+        promptSources: [...state.promptSources, { ...source, id: genId(), templates: [] }],
+      })),
+      updatePromptSource: (id, source) => set((state) => ({
+        promptSources: state.promptSources.map((item) => item.id === id ? { ...item, ...source } : item),
+      })),
+      deletePromptSource: (id) => set((state) => ({
+        promptSources: state.promptSources.filter((item) => item.id !== id),
+      })),
+      restoreDefaultPromptSources: () => set((state) => {
+        const ids = new Set(state.promptSources.map((source) => source.id))
+        const restored = DEFAULT_PROMPT_SOURCES
+          .filter((source) => !ids.has(source.id))
+          .map((source) => ({ ...source, templates: [] }))
+        if (restored.length === 0) return state
+        return { promptSources: [...state.promptSources, ...restored] }
+      }),
+      setPromptSourceEnabled: (id, enabled) => set((state) => ({
+        promptSources: state.promptSources.map((item) => item.id === id ? { ...item, enabled } : item),
+      })),
+      setPromptSourceTemplates: (id, templates, lastFetchedAt = Date.now()) => set((state) => ({
+        promptSources: state.promptSources.map((item) => item.id === id
+          ? { ...item, templates: templates.map((template) => ({ ...template, sourceId: id })), lastFetchedAt }
+          : item),
+      })),
 
       // Params
       params: { ...DEFAULT_PARAMS },
@@ -906,6 +1043,8 @@ export const useStore = create<AppState>()(
         set({ lightboxImageId, lightboxImageList: list ?? (lightboxImageId ? [lightboxImageId] : []) })
       },
       showSettings: false,
+      managedApiKeyModalOpen: false,
+      setManagedApiKeyModalOpen: (managedApiKeyModalOpen) => set({ managedApiKeyModalOpen }),
       settingsTabRequest: null,
       setShowSettings: (showSettings, settingsTabRequest) => {
         if (showSettings) dismissAllTooltips()

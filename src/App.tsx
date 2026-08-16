@@ -10,6 +10,8 @@ import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
 import AgentWorkspace from './components/AgentWorkspace'
+import { PromptTemplatesModal } from './components/PromptLibrary'
+import PromptSourceManager from './components/PromptSourceManager'
 import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
 import Lightbox from './components/Lightbox'
@@ -19,6 +21,7 @@ import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
+import ManagedApiKeyModal from './components/ManagedApiKeyModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 
@@ -34,8 +37,11 @@ export default function App() {
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search)
+    const isPromptSourcesPage = searchParams.get('page') === 'prompt-sources'
     const customProviderConfigUrl = getCustomProviderConfigUrl()
     const defaultConfigOnly = isDefaultConfigOnlyEnabled()
+
+    if (isPromptSourcesPage) useStore.getState().setAppMode('prompt-library')
 
     const applyUrlSettings = (baseSettings: Partial<AppSettings>) => {
       const nextSettings = buildSettingsFromUrlParams(baseSettings, searchParams)
@@ -112,6 +118,8 @@ export default function App() {
       <Header />
       {appMode === 'agent' ? (
         <AgentWorkspace />
+      ) : appMode === 'prompt-library' ? (
+        <PromptSourceManager />
       ) : (
         <main data-home-main data-drag-select-surface className="pb-48">
           <div className="safe-area-x max-w-7xl mx-auto">
@@ -120,14 +128,16 @@ export default function App() {
           </div>
         </main>
       )}
-      <InputBar />
+      {appMode !== 'prompt-library' && <InputBar />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />
+      <ManagedApiKeyModal />
       <ConfirmDialog />
       <SupportPromptModal />
       <FavoriteCollectionPickerModal />
       <ManageCollectionsModal />
+      <PromptTemplatesModal />
       <Toast />
       <MaskEditorModal />
       <ImageContextMenu />

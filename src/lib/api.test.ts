@@ -4,6 +4,52 @@ import { DEFAULT_SETTINGS } from './apiProfiles'
 import { callImageApi } from './api'
 
 describe('callImageApi', () => {
+  it.each([
+    ['1024x1024', '1:1'],
+    ['5504x3072', '16:9'],
+    ['3072x5504', '9:16'],
+    ['2400x1792', '4:3'],
+    ['5056x3392', '3:2'],
+    ['3584x4800', '3:4'],
+    ['auto', undefined],
+    ['1360x1024', undefined],
+  ])('maps Gemini size %s to aspect ratio %s', async (size, aspectRatio) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } }] } }],
+    }), { status: 200 }))
+
+    const geminiProfile = { ...DEFAULT_SETTINGS.profiles[0], provider: 'gemini' as const, apiKey: 'test-key', model: 'gemini-3-pro-image' }
+    await callImageApi({
+      settings: { ...DEFAULT_SETTINGS, profiles: [geminiProfile], activeProfileId: geminiProfile.id },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS, size, quality: size === '3584x4800' ? 'auto' : 'high' },
+      inputImageDataUrls: [],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body.generationConfig.imageConfig).toEqual({ imageSize: '4K', ...(aspectRatio ? { aspectRatio } : {}) })
+  })
+
+  it('maps Gemini quality to supported image sizes', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ inlineData: { data: 'aW1hZ2U=' } }] } }],
+    }), { status: 200 }))
+
+    const geminiProfile = { ...DEFAULT_SETTINGS.profiles[0], provider: 'gemini' as const, apiKey: 'test-key' }
+    for (const quality of ['auto', 'low', 'medium'] as const) {
+      await callImageApi({
+        settings: { ...DEFAULT_SETTINGS, profiles: [geminiProfile], activeProfileId: geminiProfile.id },
+        prompt: 'prompt',
+        params: { ...DEFAULT_PARAMS, quality },
+        inputImageDataUrls: [],
+      })
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).generationConfig.imageConfig.imageSize)).toEqual(['1K', '1K', '2K'])
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllEnvs()
@@ -826,6 +872,51 @@ describe('callImageApi', () => {
       '/api-proxy/images/generations',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  it('calls Gemini native image generation and parses inlineData images', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [{ text: 'done' }, { inlineData: { mimeType: 'image/jpeg', data: 'aW1hZ2U=' } }],
+        },
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        model: 'gemini-3-pro-image-preview',
+        profiles: [{
+          ...DEFAULT_SETTINGS.profiles[0],
+          id: 'profile-gemini',
+          provider: 'gemini',
+          baseUrl: 'https://generativelanguage.googleapis.com',
+          apiKey: 'test-key',
+          model: 'gemini-3-pro-image-preview',
+        }],
+        activeProfileId: 'profile-gemini',
+      },
+      prompt: 'draw a cat',
+      params: { ...DEFAULT_PARAMS, size: '16x9', quality: 'high' },
+      inputImageDataUrls: [],
+    })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent')
+    expect(body).toEqual({
+      contents: [{ role: 'user', parts: [{ text: 'draw a cat' }] }],
+      generationConfig: {
+        responseModalities: ['TEXT', 'IMAGE'],
+        imageConfig: { imageSize: '4K', aspectRatio: '16:9' },
+      },
+    })
+    expect(result.images).toEqual(['data:image/jpeg;base64,aW1hZ2U='])
   })
 
   it('does not add cache request headers that require extra CORS allow-list entries', async () => {

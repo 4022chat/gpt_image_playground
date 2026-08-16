@@ -2,3 +2,19 @@ node_modules/
 dist/
 dev-proxy.config.json
 .wrangler/
+.env
+.env.local
+.env.*.local
+.DS_Store
+
+# 使用 pnpm 作为包管理器，忽略 npm 生成的 lock 文件
+package-lock.json
+
+# 本地编辑器/系统文件
+*.log
+*.tmp
+*.local
+.idea/
+.vscode/*
+!.vscode/extensions.json
+pnpm-lock.yaml

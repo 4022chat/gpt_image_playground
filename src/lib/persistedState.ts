@@ -1,4 +1,4 @@
-import type { AgentConversation, AgentInputDraft, AppMode, AppSettings, FavoriteCollection, InputImage, MaskDraft, TaskParams } from '../types'
+import type { AgentConversation, AgentInputDraft, AppMode, AppSettings, FavoriteCollection, InputImage, MaskDraft, PromptSource, PromptTemplate, TaskParams } from '../types'
 import { normalizeSettings } from './apiProfiles'
 import { normalizeAgentConversations } from './agentConversationState'
 import { ensureDefaultFavoriteCollection, normalizeFavoriteCollections, resolveDefaultFavoriteCollectionId } from './favoriteState'
@@ -21,6 +21,7 @@ export interface PersistedAppState {
   agentAssetPanelCollapsed: boolean
   favoriteCollections: FavoriteCollection[]
   defaultFavoriteCollectionId: string | null
+  promptSources?: PromptSource[]
   supportPromptDismissed: boolean
   supportPromptOpen: boolean
   supportPromptSkippedForImportedData: boolean
@@ -38,6 +39,7 @@ type PersistedStateFallback = Pick<
   PersistedAppState,
   'settings' | 'params' | 'dismissedCodexCliPrompts' | 'favoriteCollections' | 'defaultFavoriteCollectionId'
 > & {
+  promptSources?: PromptSource[]
   agentConversations: AgentConversation[]
 }
 
@@ -64,6 +66,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeStringArray(value: unknown, fallback: string[]) {
   if (!Array.isArray(value)) return fallback
   return value.filter((item): item is string => typeof item === 'string')
+}
+
+function normalizePromptTemplates(value: unknown, sourceId: string): PromptTemplate[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item): PromptTemplate[] => {
+    if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string' || typeof item.prompt !== 'string') return []
+    const referenceImageUrls = normalizeStringArray(item.referenceImageUrls, [])
+    const tags = normalizeStringArray(item.tags, [])
+    return [{
+      id: item.id,
+      title: item.title,
+      prompt: item.prompt,
+      ...(typeof item.description === 'string' ? { description: item.description } : {}),
+      ...(typeof item.coverUrl === 'string' ? { coverUrl: item.coverUrl } : {}),
+      ...(referenceImageUrls.length ? { referenceImageUrls } : {}),
+      ...(tags.length ? { tags } : {}),
+      sourceId,
+    }]
+  })
+}
+
+function normalizePromptSources(value: unknown, fallback: PromptSource[]): PromptSource[] {
+  if (!Array.isArray(value)) return fallback
+  return value.flatMap((item): PromptSource[] => {
+    if (!isRecord(item) || typeof item.id !== 'string' || typeof item.name !== 'string' || typeof item.jsonUrl !== 'string') return []
+    return [{
+      id: item.id,
+      name: item.name,
+      jsonUrl: item.jsonUrl,
+      ...(typeof item.homepageUrl === 'string' ? { homepageUrl: item.homepageUrl } : {}),
+      enabled: typeof item.enabled === 'boolean' ? item.enabled : false,
+      templates: normalizePromptTemplates(item.templates, item.id),
+      ...(typeof item.lastFetchedAt === 'number' && Number.isFinite(item.lastFetchedAt) ? { lastFetchedAt: item.lastFetchedAt } : {}),
+    }]
+  })
 }
 
 function normalizeParams(value: unknown, fallback: TaskParams): TaskParams {
@@ -108,6 +145,7 @@ export function createPersistedState(state: PersistedStateSource, includeLegacyA
     agentAssetPanelCollapsed: state.agentAssetPanelCollapsed,
     favoriteCollections: state.favoriteCollections,
     defaultFavoriteCollectionId: state.defaultFavoriteCollectionId,
+    promptSources: state.promptSources,
     supportPromptDismissed: state.supportPromptDismissed,
     supportPromptOpen: state.supportPromptOpen,
     supportPromptSkippedForImportedData: state.supportPromptSkippedForImportedData,
@@ -139,7 +177,7 @@ export function normalizePersistedState(
   )
     ? persistedState.activeAgentConversationId
     : agentConversations[0]?.id ?? null
-  const appMode = persistedState.appMode === 'agent' ? 'agent' : 'gallery'
+  const appMode = persistedState.appMode === 'agent' || persistedState.appMode === 'prompt-library' ? persistedState.appMode : 'gallery'
   const galleryInputDraft = settings.persistInputOnRestart
     ? normalizeAgentInputDraft(persistedState.galleryInputDraft ?? {
         prompt: persistedState.prompt,
@@ -190,6 +228,7 @@ export function normalizePersistedState(
       agentAssetPanelCollapsed: Boolean(persistedState.agentAssetPanelCollapsed),
       favoriteCollections,
       defaultFavoriteCollectionId: resolveDefaultFavoriteCollectionId(favoriteCollections, preferredDefaultFavoriteCollectionId),
+      promptSources: normalizePromptSources(persistedState.promptSources, fallback.promptSources ?? []),
       supportPromptDismissed: Boolean(persistedState.supportPromptDismissed),
       supportPromptOpen: Boolean(persistedState.supportPromptOpen),
       supportPromptSkippedForImportedData: Boolean(persistedState.supportPromptSkippedForImportedData),

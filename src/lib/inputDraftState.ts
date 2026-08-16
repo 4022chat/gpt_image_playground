@@ -167,13 +167,13 @@ export function syncActiveInputDraft<T extends Partial<AgentInputDraft>>(
     maskDraft: patch.maskDraft !== undefined ? patch.maskDraft : state.maskDraft,
     maskEditorImageId: patch.maskEditorImageId !== undefined ? patch.maskEditorImageId : state.maskEditorImageId,
   }
-  if (state.appMode === 'gallery') {
+  if (state.appMode === 'gallery' || state.appMode === 'prompt-library') {
     return {
       ...patch,
       galleryInputDraft: isEmptyAgentInputDraft(draft) ? null : copyAgentInputDraft(draft),
     }
   }
-  if (!state.activeAgentConversationId) return patch
+  if (state.appMode !== 'agent' || !state.activeAgentConversationId) return patch
   return {
     ...patch,
     agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, state.activeAgentConversationId, draft),

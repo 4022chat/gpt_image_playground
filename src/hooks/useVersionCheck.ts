@@ -36,25 +36,25 @@ export function useVersionCheck() {
   useEffect(() => {
     let cancelled = false
 
-    fetch(API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .then((data) => {
-        if (cancelled) return
-        const tag: string = data.tag_name ?? ''
-        const version = tag.replace(/^v/, '')
-        if (version && compareVersions(version, __APP_VERSION__) > 0) {
-          setLatestRelease({
-            tag,
-            url: data.html_url ?? `https://github.com/${REPO}/releases/latest`,
-          })
-        }
-      })
-      .catch(() => {
-        /* 静默失败，不影响正常使用 */
-      })
+    // fetch(API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })
+    //   .then((res) => {
+    //     if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    //     return res.json()
+    //   })
+    //   .then((data) => {
+    //     if (cancelled) return
+    //     const tag: string = data.tag_name ?? ''
+    //     const version = tag.replace(/^v/, '')
+    //     if (version && compareVersions(version, __APP_VERSION__) > 0) {
+    //       setLatestRelease({
+    //         tag,
+    //         url: data.html_url ?? `https://github.com/${REPO}/releases/latest`,
+    //       })
+    //     }
+    //   })
+    //   .catch(() => {
+    //     /* 静默失败，不影响正常使用 */
+    //   })
 
     return () => {
       cancelled = true

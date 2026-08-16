@@ -19,7 +19,9 @@ import { normalizeReasoningEffort, normalizeStreamPartialImages, parseDefaultApi
 import { readRuntimeEnv } from './runtimeEnv'
 import { isImportableConfigUrl } from './customProviderConfigUrl'
 
-const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
+const OPENAI_DEFAULT_BASE_URL = 'https://api.opennex.top/v1'
+export const GEMINI_DEFAULT_BASE_URL = 'https://api.opennex.top'
+export const GEMINI_DEFAULT_MODEL = 'gemini-3-pro-image-preview'
 const RAW_DEFAULT_API_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL)
 const DEFAULT_OPENAI_API_PROXY = readRuntimeEnv(import.meta.env.VITE_API_PROXY_AVAILABLE) === 'true'
 const DOCKER_DEPLOYMENT = readRuntimeEnv(import.meta.env.VITE_DOCKER_DEPLOYMENT) === 'true'
@@ -33,9 +35,9 @@ export const DEFAULT_RESPONSES_MODEL = 'gpt-5.6-sol'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
-export const DEFAULT_API_TIMEOUT = 600
+export const DEFAULT_API_TIMEOUT = 1200
 
-const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'fal'])
+const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'fal', 'gemini'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
   generationPath: 'images/generations',
   editPath: 'images/edits',
@@ -63,6 +65,14 @@ const DEFAULT_EDIT_FILES: CustomProviderFileMapping[] = [
 
 type ApiProfileProviderDraft = NonNullable<ApiProfile['providerDrafts']>[ApiProvider]
 
+const MANAGED_PROFILE_TEMPLATES = [
+  { id: 'managed-gpt-image-2', name: 'GPT Image 2 按量计费', provider: 'openai' as const, baseUrl: OPENAI_DEFAULT_BASE_URL, model: 'gpt-image-2' },
+  { id: 'managed-gpt-image-2-c', name: 'GPT Image 2 按次计费', provider: 'openai' as const, baseUrl: OPENAI_DEFAULT_BASE_URL, model: 'gpt-image-2-c' },
+  { id: 'managed-gemini-3.1-flash-image-preview', name: 'Gemini Flash Image', provider: 'gemini' as const, baseUrl: GEMINI_DEFAULT_BASE_URL, model: 'gemini-3.1-flash-image-preview' },
+  { id: 'managed-gemini-3-pro-image-preview', name: 'Gemini Pro Image', provider: 'gemini' as const, baseUrl: GEMINI_DEFAULT_BASE_URL, model: GEMINI_DEFAULT_MODEL },
+  { id: 'managed-gpt-agent', name: 'GPT Agent 对话', provider: 'openai' as const, baseUrl: OPENAI_DEFAULT_BASE_URL, model: 'gpt-5.6-terra', apiMode: 'responses' as const },
+]
+
 function getDefaultStreamImages(provider: ApiProvider, apiMode: ApiMode): boolean {
   return provider === 'openai' && apiMode === 'responses'
 }
@@ -89,7 +99,7 @@ function normalizeZipDownloadRoutes(value: unknown) {
 function normalizeProviderOrder(value: unknown, customProviders: CustomProviderDefinition[]): string[] | undefined {
   if (!Array.isArray(value)) return undefined
 
-  const providerIds = ['openai', 'fal', ...customProviders.map((provider) => provider.id)]
+  const providerIds = ['openai', 'fal', 'gemini', ...customProviders.map((provider) => provider.id)]
   const knownIds = new Set(providerIds)
   const ordered = value
     .map(String)
@@ -332,6 +342,24 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
   }
 }
 
+export function createDefaultGeminiProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
+  return {
+    id: `gemini-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    name: '新配置',
+    provider: 'gemini',
+    baseUrl: GEMINI_DEFAULT_BASE_URL,
+    apiKey: '',
+    model: GEMINI_DEFAULT_MODEL,
+    timeout: DEFAULT_API_TIMEOUT,
+    apiMode: 'images',
+    codexCli: false,
+    apiProxy: false,
+    streamImages: false,
+    streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    ...overrides,
+  }
+}
+
 export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): ApiProfile {
   return {
     id: `fal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -367,12 +395,13 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
   }
   const savedDraft = providerDrafts[provider]
 
-  if (provider === 'fal') {
+  if (provider === 'fal' || provider === 'gemini') {
+    const isGemini = provider === 'gemini'
     return {
       ...profile,
       provider,
-      baseUrl: savedDraft?.baseUrl ?? DEFAULT_FAL_BASE_URL,
-      model: savedDraft?.model ?? DEFAULT_FAL_MODEL,
+      baseUrl: savedDraft?.baseUrl ?? (isGemini ? GEMINI_DEFAULT_BASE_URL : DEFAULT_FAL_BASE_URL),
+      model: savedDraft?.model ?? (isGemini ? GEMINI_DEFAULT_MODEL : DEFAULT_FAL_MODEL),
       apiMode: 'images',
       reasoningEffort: savedDraft?.reasoningEffort,
       codexCli: false,
@@ -428,17 +457,21 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
 
 function normalizeProviderDraft(input: unknown, provider: ApiProvider, customProviderIds: Set<string>): ApiProfileProviderDraft {
   if (!isRecord(input)) return undefined
-  const fallback = provider === 'fal' ? createDefaultFalProfile() : createDefaultOpenAIProfile()
+  const fallback = provider === 'fal'
+    ? createDefaultFalProfile()
+    : provider === 'gemini' ? createDefaultGeminiProfile() : createDefaultOpenAIProfile()
   const baseUrl = typeof input.baseUrl === 'string' ? input.baseUrl : undefined
   const model = typeof input.model === 'string' && input.model.trim() ? input.model : undefined
   const apiMode = input.apiMode === 'responses' ? 'responses' : input.apiMode === 'images' ? 'images' : undefined
-  const knownProvider = provider === 'fal' || provider === 'openai' || customProviderIds.has(provider)
+  const knownProvider = provider === 'fal' || provider === 'gemini' || provider === 'openai' || customProviderIds.has(provider)
   if (!knownProvider) return undefined
 
   return {
     baseUrl: provider === 'fal'
       ? baseUrl?.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL
-      : baseUrl,
+      : provider === 'gemini'
+        ? baseUrl?.trim().replace(/\/+$/, '') || GEMINI_DEFAULT_BASE_URL
+        : baseUrl,
     model,
     apiMode,
     reasoningEffort: normalizeReasoningEffort(input.reasoningEffort),
@@ -462,20 +495,23 @@ function normalizeProviderDrafts(input: unknown, customProviderIds: Set<string>)
 export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfile>, customProviderIds = new Set<string>()): ApiProfile {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const rawProvider = typeof record.provider === 'string' ? record.provider : ''
-  const provider: ApiProvider = rawProvider === 'fal' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
+  const provider: ApiProvider = rawProvider === 'fal' || rawProvider === 'gemini' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
   const apiMode: ApiMode = provider === 'openai' && record.apiMode === 'responses' ? 'responses' : 'images'
   const defaults = provider === 'fal'
     ? createDefaultFalProfile(fallback)
-    : createDefaultOpenAIProfile({ ...fallback, apiMode })
+    : provider === 'gemini'
+      ? createDefaultGeminiProfile({ ...fallback, apiMode })
+      : createDefaultOpenAIProfile({ ...fallback, apiMode })
   const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
   const streamImages = provider === 'openai'
     ? typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages
-    : false
+    : getDefaultStreamImages(provider, apiMode)
 
   return {
     ...defaults,
     id: typeof record.id === 'string' && record.id.trim() ? record.id : defaults.id,
     name: typeof record.name === 'string' && record.name.trim() ? record.name : defaults.name,
+    managedBy: record.managedBy === 'opennex' || record.managedBy === 'managed' ? 'managed' : undefined,
     provider,
     baseUrl: provider === 'fal' ? rawBaseUrl.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL : rawBaseUrl,
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
@@ -503,6 +539,58 @@ function validateImportedProfileRecord(input: unknown) {
   if (typeof input.apiMode === 'string' && input.apiMode !== 'images' && input.apiMode !== 'responses') {
     throw new Error('apiMode 格式无效，应为 images 或 responses')
   }
+}
+
+export function getManagedProfiles(settings: Partial<AppSettings> | unknown): ApiProfile[] {
+  return normalizeSettings(settings).profiles.filter((profile) =>
+    profile.managedBy === 'managed' || profile.id.startsWith('opennex-') || profile.name.trim().toLowerCase() === 'opennex',
+  )
+}
+
+export function ensureManagedProfiles(settings: Partial<AppSettings> | unknown): AppSettings {
+  const normalized = normalizeSettings(settings)
+  const existing = getManagedProfiles(normalized)
+  const profiles = [...normalized.profiles]
+  const profileIdMap = new Map<string, string>()
+  const usedProfileIds = new Set<string>()
+
+  for (const template of MANAGED_PROFILE_TEMPLATES) {
+    const legacyId = template.id.replace('managed-', 'opennex-')
+    const current = existing.find((profile) =>
+      !usedProfileIds.has(profile.id) && (profile.id === template.id || profile.id === legacyId || profile.name.trim().toLowerCase() === 'opennex'),
+    )
+    const profile = current
+      ? { ...current, ...template, managedBy: 'managed' as const }
+      : (template.provider === 'gemini'
+        ? createDefaultGeminiProfile({ ...template, managedBy: 'managed' })
+        : createDefaultOpenAIProfile({ ...template, managedBy: 'managed', apiMode: template.apiMode ?? 'images', streamImages: false }))
+    const index = current ? profiles.findIndex((item) => item.id === current.id) : -1
+
+    if (current && index >= 0) {
+      profiles[index] = profile
+      usedProfileIds.add(current.id)
+      profileIdMap.set(current.id, template.id)
+    } else {
+      profiles.push(profile)
+    }
+  }
+
+  const getMigratedProfileId = (id: string | null | undefined) => id ? profileIdMap.get(id) ?? id : id
+  return normalizeSettings({
+    ...normalized,
+    profiles,
+    activeProfileId: getMigratedProfileId(normalized.activeProfileId),
+    agentTextProfileId: getMigratedProfileId(normalized.agentTextProfileId),
+    agentImageProfileId: getMigratedProfileId(normalized.agentImageProfileId),
+  })
+}
+
+export function applyManagedApiKey(settings: Partial<AppSettings> | unknown, apiKey: string): AppSettings {
+  const normalized = ensureManagedProfiles(settings)
+  return normalizeSettings({
+    ...normalized,
+    profiles: normalized.profiles.map((profile) => profile.managedBy === 'managed' ? { ...profile, apiKey } : profile),
+  })
 }
 
 export function normalizeSettings(input: Partial<AppSettings> | unknown): AppSettings {
@@ -594,7 +682,7 @@ export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, pr
 }
 
 export function isOpenAICompatibleProvider(settings: Partial<AppSettings> | unknown, provider: ApiProvider): boolean {
-  return provider === 'openai' || Boolean(getCustomProviderDefinition(settings, provider))
+  return provider === 'openai' || provider === 'gemini' || Boolean(getCustomProviderDefinition(settings, provider))
 }
 
 export interface ImportedProviderSettings {

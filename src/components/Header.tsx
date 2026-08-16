@@ -6,6 +6,8 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
+import AccountQrModal from './AccountQrModal'
+import BalanceButton from './BalanceButton'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
 
@@ -22,6 +24,9 @@ function isInstalledPwa() {
 export default function Header() {
   const appMode = useStore((s) => s.appMode)
   const setAppMode = useStore((s) => s.setAppMode)
+  const promptLibraryModalOpen = useStore((s) => s.promptLibraryModalOpen)
+  const setPromptLibraryModalOpen = useStore((s) => s.setPromptLibraryModalOpen)
+  const promptLibraryActive = promptLibraryModalOpen || appMode === 'prompt-library'
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const agentMobileHeaderVisible = useStore((s) => s.agentMobileHeaderVisible)
@@ -39,6 +44,7 @@ export default function Header() {
   const [hintVisible, setHintVisible] = useState(false)
   const [scrollDirection, setScrollDirection] = useState<'up' | 'down'>('up')
   const [showHistoryModal, setShowHistoryModal] = useState(false)
+  const [showAccountQrModal, setShowAccountQrModal] = useState(false)
   const historyButtonRef = useRef<HTMLButtonElement>(null)
   const createConversation = useStore((s) => s.createAgentConversation)
 
@@ -154,22 +160,22 @@ export default function Header() {
                 <>
                   <span className="min-w-0 truncate text-[17px] font-bold tracking-tight text-gray-800 dark:text-gray-100 sm:hidden" title={favoriteCollectionTitle}>{favoriteCollectionTitle}</span>
                   <a
-                    href="https://github.com/CookSleep/gpt_image_playground"
+                    href="./"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline"
                   >
-                    GPT Image Playground
+                    Image Playground
                   </a>
                 </>
               ) : (
                 <a
-                  href="https://github.com/CookSleep/gpt_image_playground"
+                  href="./"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-[17px] sm:text-lg font-bold tracking-tight text-gray-800 dark:text-gray-100 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 >
-                  GPT Image Playground
+                  Image Playground
                 </a>
               )}
               {hasUpdate && latestRelease && (
@@ -250,9 +256,24 @@ export default function Header() {
             >
               Agent
             </button>
+            <button
+              type="button"
+              onClick={() => setPromptLibraryModalOpen(true)}
+              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${promptLibraryActive ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+            >
+              提示词库
+            </button>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {!isPwaInstalled && (
+            <button
+              type="button"
+              onClick={() => setShowAccountQrModal(true)}
+              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+            >
+              客服
+            </button>
+            <BalanceButton />
+            {/* {!isPwaInstalled && (
               <div
                 className="relative"
                 {...installTooltip.handlers}
@@ -271,12 +292,12 @@ export default function Header() {
                   安装为应用
                 </ViewportTooltip>
               </div>
-            )}
+            )} */}
             <div
               className="relative"
               {...helpTooltip.handlers}
             >
-              <button
+              {/* <button
                 onClick={() => {
                   dismissAllTooltips()
                   setShowHelp(true)
@@ -285,7 +306,7 @@ export default function Header() {
                 aria-label="操作指南"
               >
                 <HelpCircleIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-              </button>
+              </button> */}
               <ViewportTooltip visible={helpTooltip.visible} className="whitespace-nowrap">
                 操作指南
               </ViewportTooltip>
@@ -318,10 +339,10 @@ export default function Header() {
             </button>
             <button
               type="button"
-              onClick={() => setAppMode('agent')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${appMode === 'agent' ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+              onClick={() => setPromptLibraryModalOpen(true)}
+              className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${promptLibraryModalOpen ? 'bg-white dark:bg-white/10 text-gray-900 dark:text-white shadow-sm font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
             >
-              Agent
+              提示词库
             </button>
           </div>
         </div>
@@ -343,6 +364,7 @@ export default function Header() {
         </div>
       </div>
       {showHelp && <HelpModal appMode={appMode} isFavoriteCollectionOverview={appMode === 'gallery' && filterFavorite && !activeFavoriteCollectionId} onClose={() => setShowHelp(false)} />}
+      <AccountQrModal open={showAccountQrModal} onClose={() => setShowAccountQrModal(false)} />
     </>
   )
 }

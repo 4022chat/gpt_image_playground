@@ -6,6 +6,7 @@ import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from 
 import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
 import {
   createDefaultOpenAIProfile,
+  ensureManagedProfiles,
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
   DEFAULT_IMAGES_MODEL,
@@ -141,6 +142,7 @@ export default function SettingsModal() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const settings = useStore((s) => s.settings)
   const setSettings = useStore((s) => s.setSettings)
+  const setManagedApiKeyModalOpen = useStore((s) => s.setManagedApiKeyModalOpen)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setReusedTaskApiProfile = useStore((s) => s.setReusedTaskApiProfile)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -203,18 +205,20 @@ export default function SettingsModal() {
   const defaultConfigOnly = isDefaultConfigOnlyEnabled()
   const activeProfile = draft.profiles.find((profile) => profile.id === draft.activeProfileId) ?? draft.profiles[0] ?? getActiveApiProfile(draft)
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
-  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
+  const hasManagedProfiles = draft.profiles.some((profile) => profile.managedBy === 'managed')
+  const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal' || activeProfile.provider === 'gemini'
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
   const activeProfileApiProxyEligible = isProfileApiProxyEligible(draft, activeProfile)
   const activeCustomProviderAsync = isAsyncCustomProvider(activeCustomProvider)
   const apiProxyChecked = activeProfileApiProxyEligible && (apiProxyLocked || activeProfile.apiProxy)
   const apiProxyEnabled = apiProxyAvailable && activeProfileApiProxyEligible && apiProxyChecked
-  const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
+  const defaultProviderOrder = ['openai', 'fal', 'gemini', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
 
   const unorderedProviderOptions = [
     { label: 'OpenAI 兼容接口', value: 'openai', draggable: true },
-    { label: 'fal.ai', value: 'fal', draggable: true },
+    // { label: 'fal.ai', value: 'fal', draggable: true },
+    { label: 'Gemini 兼容接口', value: 'gemini', draggable: true },
     ...draft.customProviders.map((provider) => ({
       label: provider.name,
       value: provider.id,
@@ -863,7 +867,7 @@ export default function SettingsModal() {
   }
 
   const handleProviderReorder = (sourceValue: string | number, targetValue: string | number, position: 'before' | 'after' | null) => {
-    const currentOrder = draft.providerOrder || ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
+    const currentOrder = draft.providerOrder || ['openai', 'fal', 'gemini', ...draft.customProviders.map(p => p.id)]
     const sourceIndex = currentOrder.indexOf(String(sourceValue))
     const targetIndex = currentOrder.indexOf(String(targetValue))
     if (sourceIndex < 0 || targetIndex < 0) return
@@ -1202,6 +1206,17 @@ export default function SettingsModal() {
                         复制导入 URL
                       </ViewportTooltip>
                     </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextSettings = ensureManagedProfiles(draft)
+                        setDraft(nextSettings)
+                        setSettings(nextSettings)
+                        setShowSettings(false)
+                        setManagedApiKeyModalOpen(true)
+                      }}
+                      className="rounded-md px-2 py-1 text-[11px] font-medium text-blue-600 transition hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+                    >{hasManagedProfiles ? '统一修改Key' : '一键配置模型'}</button>
                     {!defaultConfigOnly && <span className="relative inline-flex">
                       <button
                         type="button"
@@ -1836,7 +1851,7 @@ export default function SettingsModal() {
 
                 <div className="flex flex-wrap items-center justify-center gap-3">
                   <a
-                    href="https://github.com/CookSleep/gpt_image_playground/issues"
+                    href="https://api.opennex.top"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-gray-100/80 px-5 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white"
@@ -1847,7 +1862,7 @@ export default function SettingsModal() {
                     反馈问题
                   </a>
                   <a
-                    href="https://www.ifdian.net/a/cooksleep"
+                    href="https://api.opennex.top"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-gray-100/80 px-5 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white"

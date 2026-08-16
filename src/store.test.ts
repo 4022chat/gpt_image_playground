@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strToU8, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
-import type { AgentConversation, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
+import type { AgentConversation, ExportData, PromptSource, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 import { hasActiveDataOperations } from './lib/dataOperations'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentConversationTaskIds, getAgentRoundTaskIds, remapAgentRoundMentionsForPathChange } from './lib/agentConversationState'
@@ -200,6 +200,43 @@ function importFile(data: ExportData, files: Record<string, Uint8Array> = {}): F
   const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength)
   return { name: 'backup.zip', size: zipped.byteLength, arrayBuffer: async () => buffer.slice(0) } as File
 }
+
+describe('prompt source restoration', () => {
+  it('only restores missing defaults and preserves existing sources', () => {
+    const sources: PromptSource[] = [
+      {
+        id: 'gemini-examples',
+        name: 'Gemini Image 案例',
+        jsonUrl: 'https://example.com/gemini.json',
+        enabled: true,
+        templates: [{ id: 'cached', title: '缓存', prompt: 'prompt' }],
+        lastFetchedAt: 1,
+      },
+      {
+        id: 'custom-source',
+        name: '自定义来源',
+        jsonUrl: 'https://example.com/custom.json',
+        enabled: true,
+        templates: [{ id: 'custom', title: '自定义', prompt: 'custom prompt' }],
+      },
+    ]
+    useStore.setState({ promptSources: sources })
+
+    useStore.getState().restoreDefaultPromptSources()
+
+    const restored = useStore.getState().promptSources
+    expect(restored).toHaveLength(3)
+    expect(restored.find((source) => source.id === 'zaoju-expression')).toMatchObject({
+      enabled: false,
+      templates: [],
+    })
+    expect(restored.find((source) => source.id === 'gemini-examples')).toBe(sources[0])
+    expect(restored.find((source) => source.id === 'custom-source')).toBe(sources[1])
+
+    useStore.getState().restoreDefaultPromptSources()
+    expect(useStore.getState().promptSources).toHaveLength(3)
+  })
+})
 
 describe('data operation locking', () => {
   it('detects running and recoverable work before import or export', () => {
