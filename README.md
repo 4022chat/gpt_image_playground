@@ -186,6 +186,9 @@
 | `VITE_LOCK_PRESET_CONFIG_PARAMS=true` | `LOCK_PRESET_CONFIG_PARAMS=true` | 锁定预置配置中除 API Key 外的参数，并禁止编辑预置供应商定义；当前锁定配置引用的供应商不可删除，解除引用后可删除 |
 | `VITE_PREVENT_PRESET_CONFIG_DELETION=true` | `PREVENT_PRESET_CONFIG_DELETION=true` | 禁止删除预置配置和预置供应商，不锁定参数；普通项不受影响 |
 | `VITE_SHOW_PRESET_CONFIG_ONLY=true` | `SHOW_PRESET_CONFIG_ONLY=true` | 只允许使用当前预置配置，禁止创建、复制、删除、拖动、切换供应商和管理自定义供应商；未同时开启锁定时参数仍可编辑，API Key 始终可编辑 |
+| `VITE_DEFAULT_UI_FONT` | `DEFAULT_UI_FONT` | 默认界面字体：`builtin`（内置字体，未设置时的默认值）、`system`（系统字体，不加载字体文件），其他值视为本机已安装的字体名称。用户在“设置 → 习惯配置 → 外观”中另行选择后以用户设置为准 |
+| `VITE_DEFAULT_MONO_FONT` | `DEFAULT_MONO_FONT` | 默认代码字体，取值规则同 `VITE_DEFAULT_UI_FONT` |
+| `VITE_BUILTIN_FONT_SOURCE` | `BUILTIN_FONT_SOURCE` | 内置字体的加载来源：`cdn`（从公共 CDN 加载）或 `local`（从本站加载随项目分发的字体文件，位于 [`fonts/`](fonts)）。未设置时为 `cdn`。用户界面中只显示“内置字体”，不区分来源 |
 
 > **未开启上述限制时的默认行为**：
 > - **参数更新**：API 地址、模型、超时等参数会与上一次部署快照比较；部署值发生变化时覆盖一次本地值，之后保留用户的本地修改，直到部署值再次变更。
@@ -195,6 +198,8 @@
 > - **失效供应商清理**：随预置引入的自定义供应商在不再被任何配置使用、且从未被用户修改时，也会自动清理。
 
 > 兼容提示：旧变量 `VITE_SHOW_DEFAULT_CONFIG_ONLY`／`SHOW_DEFAULT_CONFIG_ONLY` 仍可使用，等同于对应的 `SHOW_PRESET_CONFIG_ONLY`。
+
+> 桌面客户端的默认字体由 [`src-tauri/.env`](src-tauri/.env) 中的 `VITE_DEFAULT_UI_FONT`／`VITE_DEFAULT_MONO_FONT` 决定，内置字体的加载来源由 `VITE_BUILTIN_FONT_SOURCE` 决定，本仓库默认 `builtin` 与 `local`（使用安装包自带的字体文件，无需联网）。自行构建客户端时，可在 `src-tauri/.env.local`（不提交）中覆盖；网页版使用上表中根目录的同名环境变量。
 
 ### 部署方式
 
@@ -693,6 +698,18 @@ VITE_DEFAULT_API_URL=https://example.com/gpt-image-config.json
   <br>
   <br>
 </div>
+
+## 🔤 字体许可
+
+本项目内置以下两款字体，在设置中统一显示为“内置字体”，由部署配置 `VITE_BUILTIN_FONT_SOURCE` 决定从公共 CDN 加载还是使用随项目分发的字体文件（位于 [`fonts/`](fonts)）。完整许可文本位于 [`third-party-licenses/`](third-party-licenses)，也可在应用的“设置 → 关于 → 字体与第三方许可”中查看。
+
+| 字体 | 版权方 | 许可 | 项目地址 | 许可文件 |
+|------|------|------|------|------|
+| HarmonyOS Sans SC | Huawei Device Co., Ltd. | HarmonyOS Sans Fonts License Agreement | [HarmonyOS 设计资源](https://developer.huawei.com/consumer/cn/design/resource/)，[许可证（License）](https://github.com/openharmony/resources/blob/master/LICENSE_Fonts) | [`third-party-licenses/HarmonyOS-Sans-LICENSE.txt`](third-party-licenses/HarmonyOS-Sans-LICENSE.txt) |
+| Maple Mono NF CN | The Maple Mono Project Authors | SIL Open Font License 1.1 | [subframe7536/maple-font](https://github.com/subframe7536/maple-font) | [`third-party-licenses/MapleMono-LICENSE.txt`](third-party-licenses/MapleMono-LICENSE.txt) |
+
+- HarmonyOS Sans SC 随项目分发的是官方未经修改的 TTF 文件（Regular、Medium、Bold）。
+- Maple Mono NF CN 取自官方 v7.9 Release 的 Regular 字重，按 OFL 转换为 woff2 格式，未改动字形和名称。
 
 ## 📄 许可证 & 致谢
 

@@ -116,6 +116,26 @@ describe('MarkdownRenderer 安全性', () => {
     expect(el.querySelector('[data-streamdown="mermaid-block"]')).toBeNull()
     expect(el.textContent).toContain('graph TD; A-->B')
   })
+
+  it('Markdown 图片渲染为普通图片，不带下载按钮', async () => {
+    const el = await render(['![远程](https://example.com/a.png)', '', '![危险](javascript:alert(1))'].join('\n'), MarkdownRenderer, 'img')
+
+    const img = el.querySelector('img[src="https://example.com/a.png"]')
+    expect(img).not.toBeNull()
+    expect(img?.getAttribute('alt')).toBe('远程')
+    // 原组件会包一层 image-wrapper 并在其中放下载按钮（jsdom 不加载图片，按钮本身不会出现，因此检查包裹层）
+    expect(el.querySelector('[data-streamdown="image-wrapper"]')).toBeNull()
+    expectNoExecutableContent(el)
+  })
+
+  it('Markdown 图片加载失败时显示“图片不可用”', async () => {
+    const el = await render('![远程](https://example.com/broken.png)', MarkdownRenderer, 'img')
+
+    await act(async () => el.querySelector('img')!.dispatchEvent(new Event('error')))
+
+    expect(el.querySelector('img')).toBeNull()
+    expect(el.textContent).toContain('图片不可用')
+  })
 })
 
 describe('MarkdownRenderer 回退到 react-markdown', () => {

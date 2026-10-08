@@ -115,6 +115,9 @@ export type ReferenceImageEditAction = 'ask' | 'sketch' | 'mask'
 /** 重试任务时新建任务，还是覆盖原任务 */
 export type RetryMode = 'new' | 'overwriteFailed' | 'overwriteAll'
 
+/** 字体选择：default 表示使用部署默认（VITE_DEFAULT_UI_FONT / VITE_DEFAULT_MONO_FONT）；builtin 为内置字体，加载来源由 VITE_BUILTIN_FONT_SOURCE 决定 */
+export type FontMode = 'default' | 'builtin' | 'system' | 'custom'
+
 /** 打开画板的请求：baseImageSrc 为空时是空白画板，replaceImageId 表示完成后替换该参考图 */
 export interface SketchBoardRequest {
   baseImageSrc: string | null
@@ -152,6 +155,12 @@ export interface AppSettings {
   allowPromptRewrite: boolean
   taskCompletionNotification: boolean
   enterSubmit: boolean
+  uiFont: FontMode
+  /** uiFont 为 custom 时使用的本机字体名称 */
+  uiFontName: string
+  monoFont: FontMode
+  /** monoFont 为 custom 时使用的本机字体名称 */
+  monoFontName: string
   /** 偏好设置：是否在首页提供多提示词批量提交 */
   showBatchPrompt: boolean
   /** 多提示词批量提交，提示词之间空两行分隔 */

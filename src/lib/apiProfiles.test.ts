@@ -103,6 +103,25 @@ describe('normalizeSettings', () => {
     expect(settings.profiles[0].description).toBe('支持 **Markdown**')
     expect(settings.profiles[1].description).toBeUndefined()
   })
+
+  it('defaults font settings to following the deployment for old data', () => {
+    const settings = normalizeSettings({ enterSubmit: true })
+
+    expect(settings.uiFont).toBe('default')
+    expect(settings.uiFontName).toBe('')
+    expect(settings.monoFont).toBe('default')
+    expect(settings.monoFontName).toBe('')
+  })
+
+  it('keeps valid font settings and drops invalid ones', () => {
+    const settings = normalizeSettings({ uiFont: 'custom', uiFontName: '  Source Han Sans SC ', monoFont: 'bogus', monoFontName: 42 })
+
+    expect(settings.uiFont).toBe('custom')
+    expect(settings.uiFontName).toBe('Source Han Sans SC')
+    expect(settings.monoFont).toBe('default')
+    expect(settings.monoFontName).toBe('')
+    expect(normalizeSettings({ monoFont: 'builtin' }).monoFont).toBe('builtin')
+  })
 })
 
 describe('default API URL env', () => {

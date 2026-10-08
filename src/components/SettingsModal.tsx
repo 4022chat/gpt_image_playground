@@ -58,6 +58,7 @@ import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, GithubIcon, 
 import { TooltipButton } from './TooltipButton'
 import GeneralSettingsTab from './settings/GeneralSettingsTab'
 import AgentSettingsTab from './settings/AgentSettingsTab'
+import FontLicensesModal from './settings/FontLicensesModal'
 import CustomProviderModal from './settings/CustomProviderModal'
 import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/ProfileImportUrlModal'
 import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/ZipDownloadRouteModal'
@@ -179,6 +180,7 @@ export default function SettingsModal() {
   const settingsScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const customProviderScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const zipDownloadRouteScrollBoundaryRef = useRef<HTMLDivElement>(null)
+  const fontLicensesScrollBoundaryRef = useRef<HTMLDivElement>(null)
   
   const [draft, setDraft] = useState<AppSettings>(normalizeSettings(settings))
   const [timeoutInput, setTimeoutInput] = useState(String(getActiveApiProfile(settings).timeout))
@@ -188,6 +190,7 @@ export default function SettingsModal() {
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
   const [showZipDownloadRouteManager, setShowZipDownloadRouteManager] = useState(false)
+  const [showFontLicenses, setShowFontLicenses] = useState(false)
   const [editingCustomProviderId, setEditingCustomProviderId] = useState<string | null>(null)
   const [customProviderJson, setCustomProviderJson] = useState(DEFAULT_CUSTOM_PROVIDER_JSON)
   const [customProviderImportError, setCustomProviderImportError] = useState<string | null>(null)
@@ -547,6 +550,10 @@ export default function SettingsModal() {
       setShowZipDownloadRouteManager(false)
       return
     }
+    if (showFontLicenses) {
+      setShowFontLicenses(false)
+      return
+    }
     const nextTimeout = Number(timeoutInput)
     const normalizedTimeout =
       timeoutInput.trim() === '' || Number.isNaN(nextTimeout)
@@ -648,7 +655,7 @@ export default function SettingsModal() {
   }
 
   useCloseOnEscape(showSettings && !dataTransferMode, handleClose)
-  usePreventBackgroundScroll(showSettings, showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
+  usePreventBackgroundScroll(showSettings, showZipDownloadRouteManager ? zipDownloadRouteScrollBoundaryRef : showFontLicenses ? fontLicensesScrollBoundaryRef : showCustomProviderImport ? customProviderScrollBoundaryRef : settingsScrollBoundaryRef)
 
   if (!showSettings) return null
 
@@ -1986,6 +1993,19 @@ export default function SettingsModal() {
                     赞助作者
                   </a>
                 </div>
+
+                <div className="mt-8 flex flex-col items-center gap-2">
+                  <p data-selectable-text className="text-center text-[13px] font-medium text-gray-600 dark:text-gray-300">
+                    本软件使用 HarmonyOS Sans SC 与 Maple Mono NF CN 字体
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowFontLicenses(true)}
+                    className="text-xs text-blue-500 transition hover:text-blue-600 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                  >
+                    字体与第三方许可
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1999,6 +2019,13 @@ export default function SettingsModal() {
             scrollBoundaryRef={zipDownloadRouteScrollBoundaryRef}
             onSetEnabled={setZipDownloadRouteEnabled}
             onClose={() => setShowZipDownloadRouteManager(false)}
+          />
+        )}
+
+        {showFontLicenses && (
+          <FontLicensesModal
+            scrollBoundaryRef={fontLicensesScrollBoundaryRef}
+            onClose={() => setShowFontLicenses(false)}
           />
         )}
 
