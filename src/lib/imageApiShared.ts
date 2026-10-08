@@ -1,5 +1,6 @@
 import type { AppSettings, ResponsesOutputItem, TaskParams } from '../types'
 import { blobToDataUrl } from './dataUrl'
+import { apiFetch, isTauri } from './platform'
 
 export const MIME_MAP: Record<string, string> = {
   png: 'image/png',
@@ -166,12 +167,14 @@ export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, 
 
   let response: Response
   try {
-    response = await fetch(url, {
+    response = await apiFetch(url, {
       cache: 'no-store',
       signal,
     })
   } catch (err) {
     if (err instanceof TypeError) {
+      // 客户端由 Rust 侧发出请求，不存在跨域问题，也不需要 no-cors 探测
+      if (isTauri) throw new Error(`图片链接下载失败（可能因链接过期或网络异常）。${IMAGE_FETCH_CORS_HINT}`)
       const probe = await probeNoCorsReachability(url)
       if (probe === 'opaque') {
         throw new Error(`图片已生成，但因服务商未允许跨域，图片链接下载失败。${IMAGE_FETCH_CORS_HINT}`)

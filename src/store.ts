@@ -72,6 +72,7 @@ import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefa
 import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
+import { apiFetch, isTauri } from './lib/platform'
 
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
@@ -1302,13 +1303,16 @@ function getApiRequestNetworkErrorHint(
   const elapsedSeconds = Math.max(0, (Date.now() - createdAt) / 1000)
 
   if (elapsedSeconds <= 15) {
-    if (usesApiProxy) {
+    // 客户端忽略已保存的代理设置
+    if (usesApiProxy && !isTauri) {
       return '提示：请求立即失败，请检查 API 代理服务是否正常运行。'
     }
     const unsupportedApiHint = profile?.provider === 'openai'
       ? `\n· API 不支持 ${getApiModeApiName(profile.apiMode)}`
       : ''
-    return `提示：请求立即失败，可能原因：\n· API 服务器不可达或地址有误，请检查 API URL 是否正确、服务是否正常运行${unsupportedApiHint}\n· 接口不支持浏览器跨域请求，可使用 Docker 部署版或本地运行版并配置 API 代理解决`
+    // 客户端不受跨域限制，不提示跨域原因
+    const corsHint = isTauri ? '' : '\n· 接口不支持浏览器跨域请求，可使用 Docker 部署版或本地运行版并配置 API 代理解决'
+    return `提示：请求立即失败，可能原因：\n· API 服务器不可达或地址有误，请检查 API URL 是否正确、服务是否正常运行${unsupportedApiHint}${corsHint}`
   }
 
   if (elapsedSeconds >= 55 && elapsedSeconds <= 75) {
@@ -4777,7 +4781,7 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
 
 /** 添加图片到输入（右键菜单）—— 支持 data/blob/http URL */
 export async function addImageFromUrl(src: string): Promise<void> {
-  const res = await fetch(src)
+  const res = await apiFetch(src)
   const blob = await res.blob()
   if (!blob.type.startsWith('image/')) throw new Error('不是有效的图片')
   const dataUrl = await blobToDataUrl(blob)

@@ -1,3 +1,5 @@
+import { apiFetch } from './platform'
+
 export async function copyTextToClipboard(text: string) {
   let asyncClipboardError: unknown = null
 
@@ -22,7 +24,8 @@ export async function copyImageSourceToClipboard(src: string | Promise<string | 
 
   const resolvedSrc = await Promise.resolve(src)
   if (!resolvedSrc) throw new Error('Image source is not available')
-  const res = await fetch(resolvedSrc)
+  // Agent Markdown 中可能是远程图片，由 apiFetch 按协议分流
+  const res = await apiFetch(resolvedSrc)
   const blob = await res.blob()
   await writeImageBlobToClipboard(blob)
 }
