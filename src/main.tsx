@@ -5,11 +5,15 @@ import App from './App'
 import 'streamdown/styles.css'
 import 'katex/dist/katex.min.css'
 import './index.css'
+import { installExternalLinkHandler, isTauri } from './lib/platform'
 import { installMobileViewportGuards } from './lib/viewport'
 
 installMobileViewportGuards()
 
-if ('serviceWorker' in navigator) {
+if (isTauri) installExternalLinkHandler()
+
+// 客户端不注册 Service Worker，避免缓存与客户端版本更新冲突
+if (!isTauri && 'serviceWorker' in navigator) {
   if (import.meta.env.PROD) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((error) => {
