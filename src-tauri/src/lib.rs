@@ -1,3 +1,5 @@
+mod storage;
+
 use tauri::Manager;
 
 pub fn run() {
@@ -14,7 +16,27 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
+        .invoke_handler(tauri::generate_handler![
+            storage::commands::tasks_get_all,
+            storage::commands::task_put,
+            storage::commands::task_delete,
+            storage::commands::tasks_clear,
+            storage::commands::tasks_commit_deletion,
+            storage::commands::conversations_get_all,
+            storage::commands::conversation_put,
+            storage::commands::conversations_clear,
+            storage::commands::conversations_replace,
+            storage::commands::image_get,
+            storage::commands::image_put,
+            storage::commands::image_delete,
+            storage::commands::images_clear,
+            storage::commands::image_ids,
+            storage::commands::thumbnail_get,
+            storage::commands::thumbnail_put,
+        ])
         .setup(|app| {
+            // 存储需在主窗口创建前就绪，前端加载后立即会读取任务和图片
+            app.manage(storage::init());
             // 主窗口在 tauri.conf.json 中设为 create: false，改由代码创建以便拦截新窗口。
             // 外部链接由前端转给系统浏览器，其余 target="_blank" 和 window.open 一律拒绝，避免出现不受管理的 WebView2 弹窗
             tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[0])?
