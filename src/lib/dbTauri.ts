@@ -15,7 +15,7 @@ type FileMeta = {
 }
 
 /** Rust 侧返回 { code, message }，转成带 code 的 Error，便于上层沿用现有的错误处理 */
-async function call<T>(cmd: string, args?: InvokeArgs, opts?: InvokeOptions): Promise<T> {
+export async function call<T>(cmd: string, args?: InvokeArgs, opts?: InvokeOptions): Promise<T> {
   try {
     return await invoke<T>(cmd, args, opts)
   } catch (err) {
@@ -188,4 +188,21 @@ export async function deleteImage(id: string): Promise<undefined> {
 export async function clearImages(): Promise<undefined> {
   await call('images_clear')
   return undefined
+}
+
+/** 与 Rust 侧 StorageInfo 对应，设置页“数据管理”中展示 */
+export type StorageInfo = {
+  dataDir: string
+  dbBytes: number
+  imageBytes: number
+  imageCount: number
+  thumbnailBytes: number
+}
+
+export function getStorageInfo(): Promise<StorageInfo> {
+  return call('storage_info')
+}
+
+export async function openStorageDir(): Promise<void> {
+  await call('storage_open_dir')
 }

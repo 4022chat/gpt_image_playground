@@ -18,4 +18,9 @@ commands.allow = [
   "image_ids",
   "thumbnail_get",
   "thumbnail_put",
+  "kv_get_all",
+  "kv_set",
+  "kv_remove",
+  "storage_info",
+  "storage_open_dir",
 ]

@@ -1,5 +1,6 @@
 //! 前端 db.ts（dbTauri.ts）对应的 Tauri 命令。
 //! 文件 IO 和锁等待都放到阻塞线程池执行，不占用主线程和异步运行时的工作线程
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tauri::http::HeaderMap;
@@ -8,7 +9,8 @@ use tauri::State;
 
 use super::images::encode_file;
 use super::{
-    Doc, FileMeta, Kind, Result, Storage, StorageError, StorageState, CONVERSATIONS, TASKS,
+    Doc, FileMeta, Kind, Result, Storage, StorageError, StorageInfo, StorageState, CONVERSATIONS,
+    TASKS,
 };
 
 const SOURCES: [&str; 3] = ["upload", "generated", "mask"];
@@ -174,4 +176,34 @@ pub async fn thumbnail_get(state: State<'_, StorageState>, id: String) -> Result
 #[tauri::command]
 pub async fn thumbnail_put(state: State<'_, StorageState>, request: Request<'_>) -> Result<()> {
     put_from_request(state, request, Kind::Thumbnail).await
+}
+
+#[tauri::command]
+pub async fn kv_get_all(state: State<'_, StorageState>) -> Result<HashMap<String, String>> {
+    run(state, |s| s.kv_get_all()).await
+}
+
+#[tauri::command]
+pub async fn kv_set(state: State<'_, StorageState>, key: String, value: String) -> Result<()> {
+    run(state, move |s| s.kv_set(&key, &value)).await
+}
+
+#[tauri::command]
+pub async fn kv_remove(state: State<'_, StorageState>, key: String) -> Result<()> {
+    run(state, move |s| s.kv_remove(&key)).await
+}
+
+#[tauri::command]
+pub async fn storage_info(state: State<'_, StorageState>) -> Result<StorageInfo> {
+    run(state, |s| s.info()).await
+}
+
+/// 只打开数据目录本身，不向前端开放任意路径的打开权限
+#[tauri::command]
+pub async fn storage_open_dir(state: State<'_, StorageState>) -> Result<()> {
+    run(state, |s| {
+        tauri_plugin_opener::open_path(s.root(), None::<&str>)
+            .map_err(|err| StorageError::new("io", format!("打开数据目录失败：{err}")))
+    })
+    .await
 }

@@ -61,6 +61,7 @@ import AgentSettingsTab from './settings/AgentSettingsTab'
 import CustomProviderModal from './settings/CustomProviderModal'
 import ProfileImportUrlModal, { type CopyImportUrlOptions } from './settings/ProfileImportUrlModal'
 import ZipDownloadRouteModal, { ZIP_DOWNLOAD_ROUTE_OPTIONS } from './settings/ZipDownloadRouteModal'
+import StorageInfoSection from './settings/StorageInfoSection'
 import MarkdownRenderer from './MarkdownRenderer'
 
 function newId(prefix: string) {
@@ -1786,9 +1787,13 @@ export default function SettingsModal() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                   <div className="text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
-                    所有的配置、任务和生成的图片均仅保存在您的浏览器本地（除非您使用的服务商存储了它们）。如果您需要清理浏览器站点数据、重置浏览器或使用其他设备，请先导出备份。
+                    {isTauri
+                      ? '所有的配置、任务和生成的图片均仅保存在本机的数据目录中（除非您使用的服务商存储了它们）。如果您需要更换安装位置或使用其他设备，请先导出备份。'
+                      : '所有的配置、任务和生成的图片均仅保存在您的浏览器本地（除非您使用的服务商存储了它们）。如果您需要清理浏览器站点数据、重置浏览器或使用其他设备，请先导出备份。'}
                   </div>
                 </div>
+
+                {isTauri && <StorageInfoSection />}
 
                 <div className="rounded-2xl border border-transparent bg-black/[0.04] p-4 dark:bg-white/[0.06] space-y-4">
                   <div className="flex items-center gap-2 mb-1">

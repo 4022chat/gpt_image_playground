@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useStore, reuseConfig, editOutputs, removeTask, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds } from '../lib/favoriteState'
+import { isTauri } from '../lib/platform'
 import TaskCard from './TaskCard'
 
 export default function TaskGrid() {
@@ -12,6 +13,7 @@ export default function TaskGrid() {
   const defaultFavoriteCollectionId = useStore((s) => s.defaultFavoriteCollectionId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const setShowSettings = useStore((s) => s.setShowSettings)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const clearSelection = useStore((s) => s.clearSelection)
@@ -275,6 +277,18 @@ export default function TaskGrid() {
               />
             </svg>
             <p className="text-sm">输入提示词开始生成图片</p>
+            {isTauri && !tasks.length && (
+              <p className="mt-3 text-xs">
+                从网页版迁移：在网页版的「设置 → 数据管理」中导出备份，再
+                <button
+                  type="button"
+                  onClick={() => setShowSettings(true, 'data')}
+                  className="mx-0.5 text-blue-500 hover:text-blue-600 hover:underline dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  在这里导入
+                </button>
+              </p>
+            )}
           </>
         )}
       </div>

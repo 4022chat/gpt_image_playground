@@ -2,6 +2,7 @@
 pub mod commands;
 mod images;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -81,6 +82,18 @@ pub struct Doc {
 pub struct Storage {
     root: PathBuf,
     conn: Mutex<Connection>,
+}
+
+/// 设置页“数据管理”中展示的存储占用
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageInfo {
+    pub data_dir: String,
+    /// data.db 及其 WAL 文件
+    pub db_bytes: u64,
+    pub image_bytes: u64,
+    pub image_count: u64,
+    pub thumbnail_bytes: u64,
 }
 
 /// 初始化失败时也放入 State，命令统一返回 unavailable 错误
@@ -214,6 +227,10 @@ impl Storage {
         })
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn lock(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|err| err.into_inner())
     }
@@ -270,6 +287,57 @@ impl Storage {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn kv_get_all(&self) -> Result<HashMap<String, String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT key, value FROM kv")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn kv_set(&self, key: &str, value: &str) -> Result<()> {
+        self.lock().execute(
+            "INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?1, ?2, ?3)",
+            params![key, value, now_ms()],
+        )?;
+        Ok(())
+    }
+
+    pub fn kv_remove(&self, key: &str) -> Result<()> {
+        self.lock()
+            .execute("DELETE FROM kv WHERE key = ?1", [key])?;
+        Ok(())
+    }
+
+    /// 原图大小取自数据库记录；缩略图表没有记录大小，直接统计目录中的文件
+    pub fn info(&self) -> Result<StorageInfo> {
+        let (image_bytes, image_count): (i64, i64) = self.lock().query_row(
+            "SELECT COALESCE(SUM(bytes), 0), COUNT(*) FROM images",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let file_len = |path: PathBuf| fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let db_bytes = ["data.db", "data.db-wal"]
+            .iter()
+            .map(|name| file_len(self.root.join(name)))
+            .sum();
+        let mut thumbnail_bytes = 0;
+        for bucket in fs::read_dir(self.root.join("thumbnails"))?.flatten() {
+            if !bucket.path().is_dir() {
+                continue;
+            }
+            for entry in fs::read_dir(bucket.path())?.flatten() {
+                thumbnail_bytes += file_len(entry.path());
+            }
+        }
+        Ok(StorageInfo {
+            data_dir: self.root.display().to_string(),
+            db_bytes,
+            image_bytes: image_bytes as u64,
+            image_count: image_count as u64,
+            thumbnail_bytes,
+        })
     }
 
     /// 用给定列表整体替换对话，单个事务
@@ -413,6 +481,67 @@ mod tests {
         assert_eq!(
             storage.doc_put(TASKS, &doc("", "{}")).err().unwrap().code,
             "invalid_argument"
+        );
+    }
+
+    #[test]
+    fn kv_crud() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        assert!(storage.kv_get_all().unwrap().is_empty());
+        storage.kv_set("a", "1").unwrap();
+        storage.kv_set("b", "{\"x\":2}").unwrap();
+        storage.kv_set("a", "3").unwrap();
+        let all = storage.kv_get_all().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all["a"], "3");
+        assert_eq!(all["b"], "{\"x\":2}");
+        storage.kv_remove("a").unwrap();
+        storage.kv_remove("missing").unwrap();
+        assert_eq!(
+            storage
+                .kv_get_all()
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![("b".to_string(), "{\"x\":2}".to_string())]
+        );
+    }
+
+    #[test]
+    fn info_reports_sizes() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        let empty = storage.info().unwrap();
+        assert_eq!(empty.data_dir, dir.path().display().to_string());
+        assert!(empty.db_bytes > 0);
+        assert_eq!(
+            (empty.image_bytes, empty.image_count, empty.thumbnail_bytes),
+            (0, 0, 0)
+        );
+
+        let id = |n: u8| format!("{:064x}", n);
+        let meta = |id: String, mime: &str| FileMeta {
+            id,
+            mime: mime.into(),
+            ..Default::default()
+        };
+        storage
+            .put_file(Kind::Image, &meta(id(1), "image/png"), b"12345")
+            .unwrap();
+        storage
+            .put_file(Kind::Image, &meta(id(2), "image/png"), b"123")
+            .unwrap();
+        storage
+            .put_file(Kind::Thumbnail, &meta(id(1), "image/webp"), b"12")
+            .unwrap();
+        // webview/ 等其他目录不计入
+        fs::create_dir_all(dir.path().join("webview")).unwrap();
+        fs::write(dir.path().join("webview").join("x"), b"123456").unwrap();
+        let info = storage.info().unwrap();
+        assert_eq!(
+            (info.image_bytes, info.image_count, info.thumbnail_bytes),
+            (8, 2, 2)
         );
     }
 

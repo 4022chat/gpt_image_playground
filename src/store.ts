@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { createJSONStorage, persist } from 'zustand/middleware'
 import type {
   AgentConversation,
   AgentInputDraft,
@@ -73,6 +73,7 @@ import { createPersistedState, mergePersistedAgentConversations, migratePersiste
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
 import { apiFetch, isTauri } from './lib/platform'
+import { tauriStorage } from './lib/tauriStorage'
 
 const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
@@ -1053,6 +1054,8 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'gpt-image-playground',
+      // 与 zustand 默认存储（window.localStorage）一致；客户端改用预加载到内存的 SQLite kv
+      storage: createJSONStorage(() => isTauri ? tauriStorage : window.localStorage),
       version: 2,
       migrate: migratePersistedState,
       partialize: getPersistedState,

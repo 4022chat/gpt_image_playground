@@ -33,15 +33,40 @@ pub fn run() {
             storage::commands::image_ids,
             storage::commands::thumbnail_get,
             storage::commands::thumbnail_put,
+            storage::commands::kv_get_all,
+            storage::commands::kv_set,
+            storage::commands::kv_remove,
+            storage::commands::storage_info,
+            storage::commands::storage_open_dir,
         ])
         .setup(|app| {
             // 存储需在主窗口创建前就绪，前端加载后立即会读取任务和图片
-            app.manage(storage::init());
+            let state = storage::init();
+            // WebView2 数据放在数据目录的 webview/ 下，随安装目录走；数据目录不可用时用默认位置，不影响窗口创建
+            let webview_dir = state
+                .0
+                .as_ref()
+                .ok()
+                .map(|s| s.root().join("webview"))
+                .filter(|dir| match std::fs::create_dir_all(dir) {
+                    Ok(()) => true,
+                    Err(err) => {
+                        eprintln!("[storage] 无法创建 WebView 数据目录，改用默认位置：{err}");
+                        false
+                    }
+                });
+            app.manage(state);
             // 主窗口在 tauri.conf.json 中设为 create: false，改由代码创建以便拦截新窗口。
             // 外部链接由前端转给系统浏览器，其余 target="_blank" 和 window.open 一律拒绝，避免出现不受管理的 WebView2 弹窗
-            tauri::WebviewWindowBuilder::from_config(app.handle(), &app.config().app.windows[0])?
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                .build()?;
+            let builder = tauri::WebviewWindowBuilder::from_config(
+                app.handle(),
+                &app.config().app.windows[0],
+            )?
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+            match webview_dir {
+                Some(dir) => builder.data_directory(dir).build()?,
+                None => builder.build()?,
+            };
             Ok(())
         })
         .run(tauri::generate_context!())

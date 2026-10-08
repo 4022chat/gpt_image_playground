@@ -625,8 +625,12 @@ mod tests {
         fs::write(dir.path().join("images/ab/ab999999.png"), b"o").unwrap();
         fs::create_dir_all(dir.path().join("thumbnails/zz")).unwrap();
         fs::write(dir.path().join("thumbnails/zz/zz000000.webp"), b"o").unwrap();
+        // 数据目录下的 WebView2 数据（webview/）不属于图片分桶，不能被清理
+        fs::create_dir_all(dir.path().join("webview/EBWebView")).unwrap();
+        fs::write(dir.path().join("webview/EBWebView/Local State"), b"w").unwrap();
 
         assert_eq!(storage.cleanup_orphans().unwrap(), 3);
+        assert!(dir.path().join("webview/EBWebView/Local State").is_file());
         assert!(dir.path().join(format!("images/ab/{ID}.png")).is_file());
         assert!(dir
             .path()
