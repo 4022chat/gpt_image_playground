@@ -197,6 +197,8 @@ const MarkdownRenderer = memo(function MarkdownRenderer({
 
   const StreamdownComponent = renderer.Component
 
+  // 原始 HTML 由 streamdown 默认的 rehype 链（raw → sanitize → harden）清洗，skipHtml 对已解析的 HTML 不起作用。
+  // 不要传入自定义 rehypePlugins（会替换默认链，sanitize 随之失效）或 allowedTags（会放宽 sanitize 白名单）。
   return (
     <StreamdownComponent
       className={`markdown-renderer ${className}`.trim()}
@@ -212,7 +214,6 @@ const MarkdownRenderer = memo(function MarkdownRenderer({
       mode={streaming ? 'streaming' : 'static'}
       parseIncompleteMarkdown={streaming}
       plugins={{ math: renderer.math.math }}
-      skipHtml
       translations={translations}
       urlTransform={safeUrl}
     >

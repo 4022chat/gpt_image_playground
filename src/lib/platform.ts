@@ -44,11 +44,12 @@ export async function apiFetch(input: string | URL, init: RequestInit = {}): Pro
   return wrapped
 }
 
-/** 仅把指向其他站点的 http/https 地址视为外部链接，blob:、data: 和应用自身页面不处理 */
+/** 仅把指向其他站点的 http/https 地址和 mailto: 视为外部链接，blob:、data: 和应用自身页面不处理 */
 function toExternalUrl(raw: string | URL | undefined | null) {
   if (!raw) return null
   try {
     const url = new URL(String(raw), window.location.href)
+    if (url.protocol === 'mailto:') return url.href
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
     if (url.origin === window.location.origin) return null
     return url.href

@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "main",
+        "create": false,
         "title": "GPT Image Playground",
         "width": 1280,
         "height": 820,
@@ -23,7 +24,21 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' https://fontsapi.zeoseven.com/442/main/ https://cdn.jsdelivr.net/npm/@lobehub/webfont-harmony-sans-sc@1.0.0/",
+        "style-src-attr": "'unsafe-inline'",
+        "img-src": "'self' data: blob: http: https:",
+        "font-src": "'self' data: https://fontsapi.zeoseven.com/442/main/ https://cdn.jsdelivr.net/npm/@lobehub/webfont-harmony-sans-sc@1.0.0/",
+        "connect-src": "'self' ipc: http://ipc.localhost data: blob: https://api.github.com https://gpt-image-playground.cooksleep.dev",
+        "worker-src": "'self' blob:",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      },
+      "freezePrototype": true
     }
   },
   "bundle": {
