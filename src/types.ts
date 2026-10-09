@@ -157,6 +157,8 @@ export interface AppSettings {
   retryMode: RetryMode
   allowPromptRewrite: boolean
   taskCompletionNotification: boolean
+  /** 启动时检查 GitHub 上的新版本 */
+  autoCheckUpdate: boolean
   /** 仅客户端：把警告和错误写入日志文件 */
   writeLogFile: boolean
   enterSubmit: boolean

@@ -8,6 +8,7 @@ import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigration
 import { useAppFonts } from './hooks/useAppFonts'
 import { useCloseConfirm } from './hooks/useCloseConfirm'
 import { promptImportLink, useImportLinks } from './hooks/useImportLinks'
+import { useAutoUpdateCheck } from './hooks/useReleaseUpdates'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
@@ -16,6 +17,7 @@ import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
 import Lightbox from './components/Lightbox'
 import SettingsModal from './components/SettingsModal'
+import UpdateModal from './components/UpdateModal'
 import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
@@ -37,11 +39,13 @@ export default function App() {
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const writeLogFile = useStore((s) => s.settings.writeLogFile)
   const saveLocationMode = useStore((s) => s.settings.saveLocationMode)
+  const autoCheckUpdate = useStore((s) => s.settings.autoCheckUpdate)
   const [startupImportDone, setStartupImportDone] = useState(false)
   useDockerApiUrlMigrationNotice()
   useAppFonts()
   useGlobalClickSuppression()
   useCloseConfirm()
+  useAutoUpdateCheck(autoCheckUpdate)
   // 运行中的链接导入要等启动时的预置配置写入完，否则会被启动流程覆盖
   useImportLinks(startupImportDone)
 
@@ -188,6 +192,7 @@ export default function App() {
       <DetailModal />
       <Lightbox />
       <SettingsModal />
+      <UpdateModal />
       <ConfirmDialog />
       <SupportPromptModal />
       <FavoriteCollectionPickerModal />

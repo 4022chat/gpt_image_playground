@@ -398,6 +398,27 @@ export default function GeneralSettingsTab({
           </div>
         </div>
       </section>
+      <section className="space-y-4">
+        <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">更新</h4>
+        <div className="block">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="block text-sm text-gray-600 dark:text-gray-300">自动检查更新</span>
+            <button
+              type="button"
+              onClick={() => commitSettings({ ...draft, autoCheckUpdate: !draft.autoCheckUpdate })}
+              className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.autoCheckUpdate ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+              role="switch"
+              aria-checked={draft.autoCheckUpdate}
+              aria-label="自动检查更新"
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.autoCheckUpdate ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+            </button>
+          </div>
+          <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+            开启后，启动时会从 GitHub 获取版本信息，有新版本时在左上角显示 NEW 提示。关闭后可在“关于”中手动检查更新。
+          </div>
+        </div>
+      </section>
       {isTauri && (
         <section className="space-y-4">
           <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">诊断</h4>
