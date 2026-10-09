@@ -310,6 +310,24 @@ impl Storage {
         Ok(())
     }
 
+    /// meta 表只由 Rust 读写，不向前端开放命令，用于保存不允许前端直接修改的值（例如默认保存地址）
+    pub fn meta_get(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .lock()
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+                row.get(0)
+            })
+            .optional()?)
+    }
+
+    pub fn meta_set(&self, key: &str, value: &str) -> Result<()> {
+        self.lock().execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
     /// 原图大小取自数据库记录；缩略图表没有记录大小，直接统计目录中的文件
     pub fn info(&self) -> Result<StorageInfo> {
         let (image_bytes, image_count): (i64, i64) = self.lock().query_row(
@@ -506,6 +524,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("b".to_string(), "{\"x\":2}".to_string())]
         );
+    }
+
+    #[test]
+    fn meta_get_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        assert_eq!(storage.meta_get("x").unwrap(), None);
+        storage.meta_set("x", "1").unwrap();
+        storage.meta_set("x", "2").unwrap();
+        assert_eq!(storage.meta_get("x").unwrap().as_deref(), Some("2"));
+        // 不影响 schema 版本
+        assert_eq!(schema_version(&storage), MIGRATIONS.len().to_string());
     }
 
     #[test]

@@ -112,6 +112,9 @@ export interface PresetConfig {
 /** 参考图预览中“编辑图片”按钮的默认行为 */
 export type ReferenceImageEditAction = 'ask' | 'sketch' | 'mask'
 
+/** 仅客户端：下载和导出时每次询问保存位置，还是直接保存到默认保存地址 */
+export type SaveLocationMode = 'ask' | 'default'
+
 /** 重试任务时新建任务，还是覆盖原任务 */
 export type RetryMode = 'new' | 'overwriteFailed' | 'overwriteAll'
 
@@ -173,6 +176,8 @@ export interface AppSettings {
   batchPromptConcurrency: number
   referenceImageEditAction: ReferenceImageEditAction
   zipDownloadRoutes: ZipDownloadRoute[]
+  /** 仅客户端：默认保存地址本身由 Rust 侧保存，不在设置中 */
+  saveLocationMode: SaveLocationMode
   agentScrollToBottomAfterSubmit: boolean
   agentMaxToolRounds: number
   agentWebSearch: boolean

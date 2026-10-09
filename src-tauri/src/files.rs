@@ -1,0 +1,525 @@
+//! 保存文件：保存对话框和目录选择都在 Rust 侧弹出，前端只能写入用户刚在对话框中选择的位置，
+//! 不开放写任意路径的命令。默认保存地址同样只能经 Rust 侧的目录选择框更改，前端只能读取用于显示。
+//! 文件内容通过 IPC 请求体以二进制传输，避免 base64 或 JSON 数组
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, ErrorKind, Write};
+use std::path::{Component, Path, PathBuf};
+use std::sync::Mutex;
+
+use serde::Serialize;
+use tauri::ipc::{InvokeBody, Request};
+use tauri::{State, WebviewWindow};
+use tauri_plugin_dialog::{DialogExt, FilePath};
+
+use crate::storage::{self, Storage, StorageState};
+
+/// 本次运行中用户选择过的保存目录，前端凭序号写入，无法借此写入其他目录
+#[derive(Default)]
+pub struct SaveDirs(Mutex<Vec<PathBuf>>);
+
+#[derive(Serialize)]
+pub struct SaveDir {
+    token: usize,
+    path: String,
+}
+
+fn header<'a>(request: &'a Request<'_>, name: &str) -> &'a str {
+    request
+        .headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+}
+
+fn body<'a>(request: &'a Request<'_>) -> Result<&'a [u8], String> {
+    match request.body() {
+        InvokeBody::Raw(bytes) => Ok(bytes),
+        _ => Err("请求体必须是二进制".into()),
+    }
+}
+
+const RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// 只接受单个合法的 Windows 文件名：防止借 ../、盘符或绝对路径写到所选位置之外，
+/// 也避免写入 NUL 等设备，或因尾随点、空格被系统悄悄改名。“.”和“..”由尾随点规则排除
+fn is_plain_file_name(name: &str) -> bool {
+    // 保留名带扩展名同样无效，例如 nul.txt；主名末尾的空格会被系统忽略
+    let stem = name.split('.').next().unwrap_or_default().trim_end();
+    !name.is_empty()
+        && name.chars().count() <= 255
+        && !name.ends_with(['.', ' '])
+        && !name.contains(|c: char| c.is_control() || r#"<>:"/\|?*"#.contains(c))
+        && !RESERVED_NAMES.iter().any(|r| r.eq_ignore_ascii_case(stem))
+}
+
+fn file_name(request: &Request<'_>) -> Result<String, String> {
+    // 前端用 encodeURIComponent 编码，文件名可以包含中文等非 ASCII 字符
+    let name = percent_encoding::percent_decode_str(header(request, "x-name"))
+        .decode_utf8()
+        .map_err(|_| "文件名不是合法的 UTF-8".to_string())?
+        .into_owned();
+    if !is_plain_file_name(&name) {
+        return Err(format!("文件名不合法：{name}"));
+    }
+    Ok(name)
+}
+
+const IN_DATA_DIR: &str = "不能选择应用数据目录或其中的文件夹，请选择其他位置";
+
+/// 目录可能尚不存在：规范化最近的已存在上级，再接上其余部分
+fn normalize(path: &Path) -> PathBuf {
+    let mut existing = path;
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(real) = existing.canonicalize() {
+            return rest.iter().rev().fold(real, |acc, name| acc.join(name));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name);
+                existing = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+/// 保存位置不能落在数据目录内，否则可能覆盖 data.db 或混入孤儿清理的范围。
+/// 无法消解的“..”一律视为在数据目录内
+fn in_data_dir(path: &Path, data_dir: &Path) -> bool {
+    let path = normalize(path);
+    path.components().any(|c| c == Component::ParentDir) || path.starts_with(normalize(data_dir))
+}
+
+/// 存储不可用时仍按约定位置判断，保证保存命令不会写进数据目录
+fn data_root(state: &State<'_, StorageState>) -> Option<PathBuf> {
+    match &state.0 {
+        Ok(storage) => Some(storage.root().to_path_buf()),
+        Err(_) => storage::data_dir().ok(),
+    }
+}
+
+fn check_outside(path: &Path, data_dir: Option<&Path>) -> Result<(), String> {
+    match data_dir {
+        Some(dir) if in_data_dir(path, dir) => Err(IN_DATA_DIR.into()),
+        _ => Ok(()),
+    }
+}
+
+fn into_path(picked: Option<FilePath>) -> Result<Option<PathBuf>, String> {
+    picked
+        .map(|p| {
+            p.into_path()
+                .map_err(|err| format!("无法识别所选路径：{err}"))
+        })
+        .transpose()
+}
+
+/// 写入失败时删除写了一半的文件；打开失败时文件可能是用户原有的，不删除
+fn write_to(mut file: File, path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Err(err) = file.write_all(bytes) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(err);
+    }
+    Ok(())
+}
+
+/// 先写入同目录的临时文件再改名覆盖，写入失败时用户原有的同名文件不受影响，临时文件随之自动删除
+fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new(".")))?;
+    tmp.write_all(bytes)?;
+    tmp.persist(path).map_err(|err| err.error)?;
+    Ok(())
+}
+
+/// 目录中已有同名文件时依次改用“名称 (2).扩展名”“名称 (3).扩展名”……，不覆盖用户已有的文件
+fn create_unique(dir: &Path, name: &str) -> io::Result<(File, PathBuf)> {
+    let base = Path::new(name);
+    let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
+    let ext = base.extension().and_then(|s| s.to_str());
+    for n in 1..=999 {
+        let candidate = match (n, ext) {
+            (1, _) => name.to_string(),
+            (_, Some(ext)) => format!("{stem} ({n}).{ext}"),
+            (_, None) => format!("{stem} ({n})"),
+        };
+        let path = dir.join(candidate);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((file, path)),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(ErrorKind::AlreadyExists, "同名文件过多"))
+}
+
+/// 弹出保存对话框并写入所选路径；用户取消时返回 None。对话框自带覆盖确认
+#[tauri::command]
+pub async fn save_file(
+    window: WebviewWindow,
+    state: State<'_, StorageState>,
+    request: Request<'_>,
+) -> Result<Option<String>, String> {
+    let bytes = body(&request)?;
+    let name = file_name(&request)?;
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let ext = Path::new(&name)
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(str::to_string);
+        let dialog = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_file_name(&name);
+        match ext {
+            Some(ext) => dialog.add_filter(format!("{} 文件", ext.to_uppercase()), &[&ext]),
+            None => dialog,
+        }
+        .blocking_save_file()
+    })
+    .await
+    .map_err(|err| format!("保存对话框异常结束：{err}"))?;
+    let Some(path) = into_path(picked)? else {
+        return Ok(None);
+    };
+    let data_dir = data_root(&state);
+    tokio::task::block_in_place(|| {
+        check_outside(path.parent().unwrap_or(&path), data_dir.as_deref())
+    })?;
+    // 请求体借用自 IPC 消息，移入阻塞线程需再复制一份可能几百 MB 的数据，改用 block_in_place 原地写入
+    tokio::task::block_in_place(|| replace_file(&path, bytes))
+        .map_err(|err| format!("写入 {} 失败：{err}", path.display()))?;
+    Ok(Some(path.display().to_string()))
+}
+
+fn pick_folder(window: WebviewWindow, start: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
+    let dialog = window.dialog().file().set_parent(&window);
+    let picked = match start {
+        Some(dir) => dialog.set_directory(dir),
+        None => dialog,
+    }
+    .blocking_pick_folder();
+    into_path(picked)
+}
+
+/// 记下目录供 save_dir_write 使用，返回前端凭以写入的序号；同一目录复用已有序号，列表不会随保存次数增长
+fn register_dir(dirs: &SaveDirs, path: PathBuf) -> Result<SaveDir, String> {
+    let mut list = dirs
+        .0
+        .lock()
+        .map_err(|_| "保存目录列表不可用".to_string())?;
+    let token = match list.iter().position(|p| *p == path) {
+        Some(idx) => idx,
+        None => {
+            list.push(path.clone());
+            list.len() - 1
+        }
+    };
+    Ok(SaveDir {
+        token,
+        path: path.display().to_string(),
+    })
+}
+
+/// 弹出目录选择框，记下所选目录供 save_dir_write 使用；用户取消时返回 None
+#[tauri::command]
+pub async fn save_dir_pick(
+    window: WebviewWindow,
+    state: State<'_, StorageState>,
+    dirs: State<'_, SaveDirs>,
+) -> Result<Option<SaveDir>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(move || pick_folder(window, None))
+        .await
+        .map_err(|err| format!("目录选择框异常结束：{err}"))??;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let data_dir = data_root(&state);
+    tokio::task::block_in_place(|| check_outside(&path, data_dir.as_deref()))?;
+    register_dir(&dirs, path).map(Some)
+}
+
+/// 把请求体写入 save_dir_pick 或 download_dir_use 登记的目录，已有同名文件时加序号，返回实际写入的完整路径
+#[tauri::command]
+pub async fn save_dir_write(
+    dirs: State<'_, SaveDirs>,
+    request: Request<'_>,
+) -> Result<String, String> {
+    let bytes = body(&request)?;
+    let name = file_name(&request)?;
+    let dir = header(&request, "x-token")
+        .parse::<usize>()
+        .ok()
+        .and_then(|token| dirs.0.lock().ok()?.get(token).cloned())
+        .ok_or_else(|| "保存目录无效".to_string())?;
+    let (file, path) =
+        create_unique(&dir, &name).map_err(|err| format!("创建 {name} 失败：{err}"))?;
+    tokio::task::block_in_place(|| write_to(file, &path, bytes))
+        .map_err(|err| format!("写入 {} 失败：{err}", path.display()))?;
+    Ok(path.display().to_string())
+}
+
+const DOWNLOAD_DIR_KEY: &str = "download_dir";
+
+/// 用户未在设置中更改时的默认保存地址：优先使用安装程序写入 <数据目录>/download-dir.txt 的目录
+/// （一行绝对路径，UTF-8；相对路径或位于数据目录内时忽略），否则为与数据目录同级的 downloads/。
+/// 开发版的数据目录是 src-tauri/dev-data/，改用同级且已被 git 忽略的 dev-downloads/
+fn initial_download_dir(data_dir: &Path) -> PathBuf {
+    let from_installer = fs::read_to_string(data_dir.join("download-dir.txt"))
+        .ok()
+        .map(|text| {
+            let line = text.trim_start_matches('\u{feff}').lines().next();
+            PathBuf::from(line.unwrap_or_default().trim())
+        })
+        .filter(|path| path.is_absolute() && !in_data_dir(path, data_dir));
+    if let Some(dir) = from_installer {
+        return dir;
+    }
+    let name = if cfg!(debug_assertions) {
+        "dev-downloads"
+    } else {
+        "downloads"
+    };
+    data_dir.parent().unwrap_or(data_dir).join(name)
+}
+
+fn storage<'a>(state: &'a State<'_, StorageState>) -> Result<&'a Storage, String> {
+    state.0.as_deref().map_err(|err| err.message.clone())
+}
+
+/// 默认保存地址保存在 meta 表中，前端没有写 meta 的命令，只能经 download_dir_pick 的目录选择框更改。
+/// 会访问数据库和磁盘，调用方需放在 block_in_place 中
+fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
+    let saved = storage
+        .meta_get(DOWNLOAD_DIR_KEY)
+        .map_err(|err| err.message)?;
+    Ok(saved
+        .map(PathBuf::from)
+        .unwrap_or_else(|| initial_download_dir(storage.root())))
+}
+
+/// 不存在时创建，并实际创建临时文件探测权限，提前发现目录不可写或所在磁盘已移除
+fn ensure_writable(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)?;
+    tempfile::tempfile_in(dir)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn download_dir_get(state: State<'_, StorageState>) -> Result<String, String> {
+    let storage = storage(&state)?;
+    let dir = tokio::task::block_in_place(|| download_dir(storage))?;
+    Ok(dir.display().to_string())
+}
+
+/// 弹出目录选择框更改默认保存地址，返回新地址；用户取消时返回 None
+#[tauri::command]
+pub async fn download_dir_pick(
+    window: WebviewWindow,
+    state: State<'_, StorageState>,
+) -> Result<Option<String>, String> {
+    let storage = storage(&state)?;
+    // 从当前地址开始选择；目录不存在时由系统决定起始位置
+    let start = tokio::task::block_in_place(|| {
+        download_dir(storage).map(|dir| Some(dir).filter(|d| d.is_dir()))
+    })?;
+    let picked = tauri::async_runtime::spawn_blocking(move || pick_folder(window, start))
+        .await
+        .map_err(|err| format!("目录选择框异常结束：{err}"))??;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    tokio::task::block_in_place(|| {
+        check_outside(&path, Some(storage.root()))?;
+        storage
+            .meta_set(DOWNLOAD_DIR_KEY, &path.display().to_string())
+            .map_err(|err| format!("保存默认保存地址失败：{}", err.message))
+    })?;
+    Ok(Some(path.display().to_string()))
+}
+
+/// “默认地址”模式下保存前调用：确认默认保存地址可写，并像 save_dir_pick 一样登记，之后用 save_dir_write 写入
+#[tauri::command]
+pub async fn download_dir_use(
+    state: State<'_, StorageState>,
+    dirs: State<'_, SaveDirs>,
+) -> Result<SaveDir, String> {
+    let storage = storage(&state)?;
+    let dir = tokio::task::block_in_place(|| {
+        let dir = download_dir(storage)?;
+        // 纵深防御：meta 中的值只能经 download_dir_pick 写入，写入前仍再确认不在数据目录内
+        check_outside(&dir, Some(storage.root()))?;
+        ensure_writable(&dir).map_err(|err| {
+            format!(
+                "默认保存地址不可用（{}）：{err}。请在“设置 → 习惯配置”中重新选择默认保存地址，或把文件保存位置改为“每次询问”",
+                dir.display()
+            )
+        })?;
+        Ok::<_, String>(dir)
+    })?;
+    register_dir(&dirs, dir)
+}
+
+/// 只打开默认保存地址本身，不存在时先创建
+#[tauri::command]
+pub async fn download_dir_open(state: State<'_, StorageState>) -> Result<(), String> {
+    let storage = storage(&state)?;
+    let dir = tokio::task::block_in_place(|| {
+        let dir = download_dir(storage)?;
+        fs::create_dir_all(&dir).map_err(|err| format!("无法创建 {}：{err}", dir.display()))?;
+        Ok::<_, String>(dir)
+    })?;
+    tauri_plugin_opener::open_path(&dir, None::<&str>)
+        .map_err(|err| format!("打开默认保存地址失败：{err}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_paths_in_file_name() {
+        assert!(is_plain_file_name("backup_2026-10-09.zip"));
+        assert!(is_plain_file_name("收藏 图片.png"));
+        assert!(is_plain_file_name("console.png"));
+        assert!(is_plain_file_name("com10.png"));
+        assert!(is_plain_file_name(&"图".repeat(255)));
+        let long = "a".repeat(256);
+        for name in [
+            "a?.png",
+            "a\u{1}.png",
+            "a\tb.png",
+            "con",
+            "NUL.txt",
+            "Com1.tar.gz",
+            "lpt9",
+            "aux .png",
+            "a.zip.",
+            "a.zip ",
+            &long,
+            "",
+            ".",
+            "..",
+            "../a.zip",
+            "a/b.zip",
+            "a\\b.zip",
+            "C:a.zip",
+            "C:\\a.zip",
+        ] {
+            assert!(!is_plain_file_name(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn replace_file_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.zip");
+        fs::write(&path, b"old").unwrap();
+        replace_file(&path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        // 临时文件已改名为目标文件，目录中不留残余
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn initial_download_dir_prefers_installer_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        let fallback = dir.path().join(if cfg!(debug_assertions) {
+            "dev-downloads"
+        } else {
+            "downloads"
+        });
+        assert_eq!(initial_download_dir(&data), fallback);
+        // 相对路径不可信，忽略
+        fs::write(data.join("download-dir.txt"), "downloads").unwrap();
+        assert_eq!(initial_download_dir(&data), fallback);
+        // 指向数据目录内（含尚不存在的子目录）时忽略
+        for inside in [data.clone(), data.join("images"), data.join("x").join("y")] {
+            fs::write(data.join("download-dir.txt"), inside.display().to_string()).unwrap();
+            assert_eq!(
+                initial_download_dir(&data),
+                fallback,
+                "{}",
+                inside.display()
+            );
+        }
+        let picked = dir.path().join("图片 下载");
+        fs::write(
+            data.join("download-dir.txt"),
+            format!("\u{feff}{}\r\nignored", picked.display()),
+        )
+        .unwrap();
+        assert_eq!(initial_download_dir(&data), picked);
+    }
+
+    #[test]
+    fn detects_paths_in_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(data.join("images")).unwrap();
+        assert!(in_data_dir(&data, &data));
+        assert!(in_data_dir(&data.join("images"), &data));
+        assert!(in_data_dir(&data.join("new").join("sub"), &data));
+        // 经“..”绕回数据目录
+        assert!(in_data_dir(
+            &dir.path().join("other").join("..").join("data"),
+            &data
+        ));
+        assert!(!in_data_dir(&dir.path().join("downloads"), &data));
+        assert!(!in_data_dir(dir.path(), &data));
+        // 仅名称前缀相同不算
+        assert!(!in_data_dir(&dir.path().join("data2"), &data));
+        assert_eq!(
+            check_outside(&data.join("images"), Some(&data)).unwrap_err(),
+            IN_DATA_DIR
+        );
+        assert!(check_outside(&data, None).is_ok());
+    }
+
+    #[test]
+    fn register_dir_reuses_token() {
+        let dirs = SaveDirs::default();
+        let a = register_dir(&dirs, PathBuf::from("C:\\a")).unwrap();
+        let b = register_dir(&dirs, PathBuf::from("C:\\b")).unwrap();
+        let again = register_dir(&dirs, PathBuf::from("C:\\a")).unwrap();
+        assert_eq!((a.token, b.token, again.token), (0, 1, 0));
+        assert_eq!(dirs.0.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn ensure_writable_creates_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("a").join("b");
+        ensure_writable(&target).unwrap();
+        // 探测用的临时文件不留在目录中
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
+        // 路径被普通文件占用时报错
+        let blocked = dir.path().join("file");
+        fs::write(&blocked, b"").unwrap();
+        assert!(ensure_writable(&blocked).is_err());
+    }
+
+    #[test]
+    fn numbers_duplicate_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let names: Vec<_> = (0..3)
+            .map(|_| {
+                let (file, path) = create_unique(dir.path(), "a.zip").unwrap();
+                write_to(file, &path, b"x").unwrap();
+                path.file_name().unwrap().to_string_lossy().into_owned()
+            })
+            .collect();
+        assert_eq!(names, ["a.zip", "a (2).zip", "a (3).zip"]);
+        let (_, path) = create_unique(dir.path(), "noext").unwrap();
+        assert_eq!(path.file_name().unwrap(), "noext");
+        let (_, path) = create_unique(dir.path(), "noext").unwrap();
+        assert_eq!(path.file_name().unwrap(), "noext (2)");
+    }
+}

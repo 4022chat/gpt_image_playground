@@ -8,6 +8,7 @@
     "core:window:allow-destroy",
     "storage",
     "diagnostics",
+    "files",
     "log:default",
     "deep-link:allow-get-current",
     "clipboard-manager:allow-read-text",

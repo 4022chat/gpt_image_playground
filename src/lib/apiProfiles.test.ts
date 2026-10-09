@@ -92,6 +92,13 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ retryMode: 'overwriteAll', alwaysShowRetryButton: true }).retryMode).toBe('overwriteAll')
   })
 
+  it('defaults the save location mode to asking and drops invalid values', () => {
+    expect(DEFAULT_SETTINGS.saveLocationMode).toBe('ask')
+    expect(normalizeSettings({}).saveLocationMode).toBe('ask')
+    expect(normalizeSettings({ saveLocationMode: 'bogus' }).saveLocationMode).toBe('ask')
+    expect(normalizeSettings({ saveLocationMode: 'default' }).saveLocationMode).toBe('default')
+  })
+
   it('preserves a non-empty profile description and removes an empty one', () => {
     const settings = normalizeSettings({
       profiles: [

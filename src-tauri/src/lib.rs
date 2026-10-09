@@ -1,4 +1,5 @@
 mod diagnostics;
+mod files;
 mod storage;
 
 use tauri::Manager;
@@ -19,6 +20,8 @@ pub fn run() {
         .plugin(diagnostics::plugin())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // 只供 Rust 侧的保存命令弹出对话框，不向前端开放插件命令
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
@@ -48,7 +51,15 @@ pub fn run() {
             storage::commands::storage_open_dir,
             diagnostics::log_set_enabled,
             diagnostics::log_open_dir,
+            files::save_file,
+            files::save_dir_pick,
+            files::save_dir_write,
+            files::download_dir_get,
+            files::download_dir_pick,
+            files::download_dir_use,
+            files::download_dir_open,
         ])
+        .manage(files::SaveDirs::default())
         .setup(|app| {
             // 安装版由 NSIS 注册协议。开发版只在设置了 GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK 时才注册，
             // 注册会把 HKCU 下的协议改为指向当前开发版程序，覆盖安装版的注册；

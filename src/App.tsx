@@ -25,6 +25,7 @@ import SupportPromptModal from './components/SupportPromptModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 import { isTauri } from './lib/platform'
+import { setSaveToDefaultDir } from './lib/saveFile'
 import { setTauriLogEnabled } from './lib/tauriLog'
 import { getTauriStorageLoadError } from './lib/tauriStorage'
 
@@ -35,6 +36,7 @@ export default function App() {
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
   const writeLogFile = useStore((s) => s.settings.writeLogFile)
+  const saveLocationMode = useStore((s) => s.settings.saveLocationMode)
   const [startupImportDone, setStartupImportDone] = useState(false)
   useDockerApiUrlMigrationNotice()
   useAppFonts()
@@ -73,6 +75,11 @@ export default function App() {
   useEffect(() => {
     if (isTauri) setTauriLogEnabled(writeLogFile)
   }, [writeLogFile])
+
+  useEffect(() => {
+    // 网页版始终由浏览器下载，忽略备份中带来的该设置
+    setSaveToDefaultDir(isTauri && saveLocationMode === 'default')
+  }, [saveLocationMode])
 
   useEffect(() => {
     if (defaultConfigImportStarted) return

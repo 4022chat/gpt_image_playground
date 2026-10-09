@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../types'
 import { isTauri } from '../../lib/platform'
+import { changeDefaultSaveDir, getDefaultSaveDir, openDefaultSaveDir } from '../../lib/saveFile'
 import { openTauriLogDir } from '../../lib/tauriLog'
 import { useStore } from '../../store'
 import Select from '../Select'
@@ -21,6 +23,34 @@ export default function GeneralSettingsTab({
   toggleTaskCompletionNotification,
 }: GeneralSettingsTabProps) {
   const showToast = useStore((s) => s.showToast)
+  const [defaultSaveDir, setDefaultSaveDir] = useState('')
+
+  useEffect(() => {
+    if (!isTauri) return
+    getDefaultSaveDir().then(setDefaultSaveDir).catch((err) => {
+      console.error('读取默认保存地址失败：', err)
+      setDefaultSaveDir(typeof err === 'string' ? err : '读取失败')
+    })
+  }, [])
+
+  const handleChangeDefaultSaveDir = async () => {
+    try {
+      const dir = await changeDefaultSaveDir()
+      if (dir) setDefaultSaveDir(dir)
+    } catch (err) {
+      console.error('更改默认保存地址失败：', err)
+      showToast(typeof err === 'string' ? err : '更改默认保存地址失败', 'error')
+    }
+  }
+
+  const handleOpenDefaultSaveDir = async () => {
+    try {
+      await openDefaultSaveDir()
+    } catch (err) {
+      console.error('打开默认保存地址失败：', err)
+      showToast(typeof err === 'string' ? err : '打开默认保存地址失败', 'error')
+    }
+  }
 
   const handleOpenLogDir = async () => {
     try {
@@ -258,6 +288,53 @@ export default function GeneralSettingsTab({
             {zipDownloadRouteSummary}
           </div>
         </div>
+        {isTauri && (
+          <>
+            <div className="block">
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <span className="block text-sm text-gray-600 dark:text-gray-300">文件保存位置</span>
+                <div className="w-28 shrink-0">
+                  <Select
+                    value={draft.saveLocationMode}
+                    onChange={(val) => commitSettings({ ...draft, saveLocationMode: val as AppSettings['saveLocationMode'] })}
+                    options={[
+                      { label: '每次询问', value: 'ask' },
+                      { label: '默认地址', value: 'default' },
+                    ]}
+                    className="w-full px-3 py-1.5 rounded-xl border border-transparent bg-black/[0.04] dark:bg-white/[0.06] hover:bg-black/[0.07] dark:hover:bg-white/[0.1] text-xs transition-all duration-200 text-gray-700 dark:text-gray-200 outline-none"
+                  />
+                </div>
+              </div>
+              <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+                下载图片、压缩包和导出备份时，每次选择保存位置，或直接保存到默认保存地址；直接保存时遇到同名文件会自动加序号，不会覆盖。
+              </div>
+            </div>
+            <div className="block">
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <span className="block text-sm text-gray-600 dark:text-gray-300">默认保存地址</span>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleChangeDefaultSaveDir}
+                    className="shrink-0 rounded-xl border border-transparent bg-black/[0.04] px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-black/[0.07] hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white"
+                  >
+                    更改
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenDefaultSaveDir}
+                    className="shrink-0 rounded-xl border border-transparent bg-black/[0.04] px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-black/[0.07] hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white"
+                  >
+                    打开
+                  </button>
+                </div>
+              </div>
+              <div data-selectable-text className="break-all text-xs text-gray-500 dark:text-gray-500">
+                {defaultSaveDir || '读取中…'}
+              </div>
+            </div>
+          </>
+        )}
       </section>
       <section className="space-y-4">
         <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">通知</h4>

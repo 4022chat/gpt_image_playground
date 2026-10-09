@@ -8,3 +8,4 @@ dev-proxy.config.json
 src-tauri/target/
 src-tauri/gen/schemas/
 src-tauri/dev-data/
+src-tauri/dev-downloads/

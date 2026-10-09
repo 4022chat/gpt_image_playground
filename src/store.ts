@@ -74,6 +74,7 @@ import { createPersistedState, mergePersistedAgentConversations, migratePersiste
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
 import { apiFetch, isTauri } from './lib/platform'
+import { pickSaveDir, saveFile, saveFileToDir } from './lib/saveFile'
 import { tauriStorage } from './lib/tauriStorage'
 
 const FAL_RECOVERY_POLL_MS = 10_000
@@ -4532,6 +4533,10 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     }
     const plan = getExportZipPlan(params, imageSizes)
     const backupId = `${exportedAt}`
+    // 客户端分卷备份时先选择目录，一次写入全部分卷，替代浏览器的多文件下载
+    const dir = isTauri && plan.length > 1 ? await pickSaveDir() : null
+    if (isTauri && plan.length > 1 && !dir) return
+    let savedPath = ''
 
     for (let index = 0; index < plan.length; index++) {
       const images: StoredImage[] = []
@@ -4561,19 +4566,22 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
         includeManifestData: plan[index].includeBaseData,
         backupPart: plan.length > 1 ? { id: backupId, index: partNumber, total: plan.length } : undefined,
       })
-      const blob = createExportBlob(result.bytes)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
       const suffix = plan.length > 1 ? `_${String(plan.length).padStart(2, '0')}parts_part${String(partNumber).padStart(2, '0')}` : ''
-      a.href = url
-      a.download = `gpt-image-playground-backup_${formatExportFileTime(new Date(exportedAt))}${suffix}.zip`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      const fileName = `gpt-image-playground-backup_${formatExportFileTime(new Date(exportedAt))}${suffix}.zip`
+      if (dir) {
+        await saveFileToDir(dir, result.bytes, fileName)
+        continue
+      }
+      // 客户端直接传字节给 Rust 写入，不再复制一份 Blob
+      const saved = await saveFile(isTauri ? result.bytes : createExportBlob(result.bytes), fileName)
+      if (!saved) return
+      savedPath = saved
       if (partNumber < plan.length) await new Promise((resolve) => setTimeout(resolve, 150))
     }
-    useStore.getState().showToast(plan.length > 1 ? `已请求下载 ${plan.length} 个 ZIP，${isTauri ? '如出现提示，请允许下载多个文件' : '请确认浏览器已允许多文件下载'}` : '数据已导出', 'success')
+    const msg = dir
+      ? `已导出 ${plan.length} 个 ZIP 到 ${dir.path}`
+      : plan.length > 1 ? `已请求下载 ${plan.length} 个 ZIP，请确认浏览器已允许多文件下载` : isTauri ? `数据已导出到 ${savedPath}` : '数据已导出'
+    useStore.getState().showToast(msg, 'success')
   } catch (e) {
     console.error('exportData failed', e)
     const detail = e instanceof Error ? e.message.trim() : String(e).trim()

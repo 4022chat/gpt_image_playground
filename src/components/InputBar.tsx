@@ -17,7 +17,9 @@ import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { ALL_FAVORITES_COLLECTION_ID, getTaskFavoriteCollectionIds } from '../lib/favoriteState'
 import { getContentEditableCursor, getContentEditablePlainText, getContentEditableSelection, getMentionTagHtml, setContentEditableCursor, setContentEditableSelection, syncMentionTagSelection } from '../lib/contentEditableMentions'
 import { useHintTooltip } from '../hooks/useHintTooltip'
-import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getTaskOutputImageZipEntries } from '../lib/downloadImages'
+import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getDownloadErrorMessage, getTaskOutputImageZipEntries, withSaveLocation } from '../lib/downloadImages'
+import { pickSaveDir } from '../lib/saveFile'
+import { isTauri } from '../lib/platform'
 import SizePickerModal from './SizePickerModal'
 import { CloseIcon, CollapseIcon, ExpandIcon, SketchIcon } from './icons'
 import { CommentBadge } from './CommentMarks'
@@ -216,20 +218,21 @@ export default function InputBar() {
     try {
       const timeStr = formatExportFileTime(new Date())
       const fileNameBase = `batch-${timeStr}`
-      const { successCount, failCount } = settings.zipDownloadRoutes.includes('task-selection')
+      const result = settings.zipDownloadRoutes.includes('task-selection')
         ? await downloadImageEntriesAsZip(getTaskOutputImageZipEntries(selectedTasks), fileNameBase)
         : await downloadImageIds(imageIds, fileNameBase)
+      if (result.canceled) return
 
-      if (successCount === 0) {
-        showToast('下载失败', 'error')
-      } else if (failCount > 0) {
-        showToast(`部分下载失败：成功 ${successCount}，失败 ${failCount}`, 'error')
+      if (result.successCount === 0) {
+        showToast(getDownloadErrorMessage(result.error), 'error')
+      } else if (result.failCount > 0) {
+        showToast(`部分下载失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
       } else {
-        showToast(successCount > 1 ? `下载成功：${successCount} 张图片` : '下载成功', 'success')
+        showToast(withSaveLocation(result.successCount > 1 ? `下载成功：${result.successCount} 张图片` : '下载成功', result.location), 'success')
       }
     } catch (err) {
       console.error(err)
-      showToast('下载失败', 'error')
+      showToast(getDownloadErrorMessage(err), 'error')
     }
     clearSelection()
   }, [tasks, selectedTaskIds, settings.zipDownloadRoutes, showToast, clearSelection])
@@ -242,10 +245,15 @@ export default function InputBar() {
     let successCount = 0
     let failCount = 0
     let downloadedCollectionCount = 0
+    let location: string | undefined
+    let error: string | undefined
     const useZipDownload = settings.zipDownloadRoutes.includes('favorite-collection-selection')
     const timeStr = formatExportFileTime(new Date())
 
     try {
+      // 客户端选中多个收藏夹时只选择一次目录，避免每个收藏夹各弹一次对话框
+      const dir = isTauri && selectedCollections.length > 1 ? await pickSaveDir() : null
+      if (isTauri && selectedCollections.length > 1 && !dir) return
       for (const collection of selectedCollections) {
         const entries = getTaskOutputImageZipEntries(collection.tasks)
         if (entries.length === 0) continue
@@ -253,24 +261,29 @@ export default function InputBar() {
           ? `favorites-all-${timeStr}`
           : `favorites-${collection.name}-${timeStr}`
         const result = useZipDownload
-          ? await downloadImageEntriesAsZip(entries, zipName)
-          : await downloadImageIds(entries.map((entry) => entry.imageId), zipName)
+          ? await downloadImageEntriesAsZip(entries, zipName, dir)
+          : await downloadImageIds(entries.map((entry) => entry.imageId), zipName, dir)
+        if (result.canceled) return
         successCount += result.successCount
         failCount += result.failCount
+        location = dir?.path ?? result.location ?? location
+        error = result.error ?? error
         if (result.successCount > 0) downloadedCollectionCount++
-        if (selectedCollections.length > 1) await delay(100)
+        if (selectedCollections.length > 1 && !dir) await delay(100)
       }
 
-      if (successCount === 0) {
+      if (successCount === 0 && failCount > 0) {
+        showToast(getDownloadErrorMessage(error), 'error')
+      } else if (successCount === 0) {
         showToast('选中的收藏夹没有图片', 'info')
       } else if (failCount > 0) {
         showToast(`部分下载失败：成功 ${successCount}，失败 ${failCount}`, 'error')
       } else {
-        showToast(useZipDownload && downloadedCollectionCount > 1 ? `下载成功：${downloadedCollectionCount} 个压缩包，${successCount} 张图片` : `下载成功：${successCount} 张图片`, 'success')
+        showToast(withSaveLocation(useZipDownload && downloadedCollectionCount > 1 ? `下载成功：${downloadedCollectionCount} 个压缩包，${successCount} 张图片` : `下载成功：${successCount} 张图片`, location), 'success')
       }
     } catch (err) {
       console.error(err)
-      showToast('下载失败', 'error')
+      showToast(getDownloadErrorMessage(err), 'error')
     }
     clearFavoriteCollectionSelection()
   }, [clearFavoriteCollectionSelection, favoriteCollectionCards, selectedFavoriteCollectionIds, settings.zipDownloadRoutes, showToast])

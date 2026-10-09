@@ -1813,7 +1813,7 @@ export default function SettingsModal() {
                     <ExportIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
                     <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">导出数据</h4>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{isTauri ? '受文件大小限制，过大的备份将自动分片导出为多个文件' : '受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件'}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{isTauri ? '受文件大小限制，过大的备份将自动分片，导出时选择一个文件夹保存全部分片' : '受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件'}</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-3">
                     <Checkbox
                       checked={exportConfig}
