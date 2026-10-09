@@ -122,11 +122,11 @@ pub fn init() -> StorageState {
             let storage = storage.clone();
             std::thread::spawn(move || match storage.cleanup_orphans() {
                 Ok(0) => {}
-                Ok(n) => eprintln!("[storage] 已清理 {n} 个孤儿文件"),
-                Err(err) => eprintln!("[storage] 清理孤儿文件失败：{err}"),
+                Ok(n) => log::info!("已清理 {n} 个孤儿文件"),
+                Err(err) => log::warn!("清理孤儿文件失败：{err}"),
             });
         }
-        Err(err) => eprintln!("[storage] 初始化失败：{err}"),
+        Err(err) => log::error!("存储初始化失败：{err}"),
     }
     StorageState(opened)
 }

@@ -24,6 +24,8 @@ import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
+import { isTauri } from './lib/platform'
+import { setTauriLogEnabled } from './lib/tauriLog'
 import { getTauriStorageLoadError } from './lib/tauriStorage'
 
 let defaultConfigImportStarted = false
@@ -32,6 +34,7 @@ export default function App() {
   const appMode = useStore((s) => s.appMode)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
+  const writeLogFile = useStore((s) => s.settings.writeLogFile)
   const [startupImportDone, setStartupImportDone] = useState(false)
   useDockerApiUrlMigrationNotice()
   useAppFonts()
@@ -66,6 +69,10 @@ export default function App() {
       tone: 'warning',
     })
   }, [])
+
+  useEffect(() => {
+    if (isTauri) setTauriLogEnabled(writeLogFile)
+  }, [writeLogFile])
 
   useEffect(() => {
     if (defaultConfigImportStarted) return

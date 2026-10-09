@@ -154,6 +154,8 @@ export interface AppSettings {
   retryMode: RetryMode
   allowPromptRewrite: boolean
   taskCompletionNotification: boolean
+  /** 仅客户端：把警告和错误写入日志文件 */
+  writeLogFile: boolean
   enterSubmit: boolean
   uiFont: FontMode
   /** uiFont 为 custom 时使用的本机字体名称 */

@@ -7,6 +7,8 @@
     "core:default",
     "core:window:allow-destroy",
     "storage",
+    "diagnostics",
+    "log:default",
     "deep-link:allow-get-current",
     "clipboard-manager:allow-read-text",
     "notification:allow-is-permission-granted",

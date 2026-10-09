@@ -5,12 +5,14 @@ import 'streamdown/styles.css'
 import 'katex/dist/katex.min.css'
 import './index.css'
 import { installBrowserBehaviorGuards, installExternalLinkHandler, isTauri } from './lib/platform'
+import { installTauriLog } from './lib/tauriLog'
 import { installTauriStorageFlush, loadTauriStorage } from './lib/tauriStorage'
 import { installMobileViewportGuards } from './lib/viewport'
 
 installMobileViewportGuards()
 
 if (isTauri) {
+  installTauriLog()
   installExternalLinkHandler()
   installBrowserBehaviorGuards()
 }

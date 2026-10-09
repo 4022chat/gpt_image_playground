@@ -102,7 +102,7 @@ fn remove_files(storage: &Storage, files: &[String]) {
     for file in files {
         match fs::remove_file(storage.root.join(file)) {
             Err(err) if err.kind() != ErrorKind::NotFound => {
-                eprintln!("[storage] 删除文件失败 {file}：{err}")
+                log::warn!("删除文件失败 {file}：{err}")
             }
             _ => {}
         }
@@ -268,7 +268,7 @@ impl Storage {
         match fs::read(self.root.join(&file)) {
             Ok(bytes) => Ok(Some((meta, bytes))),
             Err(err) if err.kind() == ErrorKind::NotFound => {
-                eprintln!("[storage] 记录存在但文件缺失：{file}");
+                log::warn!("记录存在但文件缺失：{file}");
                 Ok(None)
             }
             Err(err) => Err(err.into()),
@@ -347,7 +347,7 @@ impl Storage {
                     };
                     match removed_ok {
                         Ok(()) => removed += 1,
-                        Err(err) => eprintln!("[storage] 删除孤儿文件失败 {rel}：{err}"),
+                        Err(err) => log::warn!("删除孤儿文件失败 {rel}：{err}"),
                     }
                 }
                 // 空的分桶目录顺手删掉；非空时删除失败，忽略即可

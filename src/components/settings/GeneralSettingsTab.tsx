@@ -1,5 +1,7 @@
 import type { AppSettings } from '../../types'
 import { isTauri } from '../../lib/platform'
+import { openTauriLogDir } from '../../lib/tauriLog'
+import { useStore } from '../../store'
 import Select from '../Select'
 import FontSettingField from './FontSettingField'
 
@@ -18,6 +20,17 @@ export default function GeneralSettingsTab({
   onOpenZipDownloadRouteManager,
   toggleTaskCompletionNotification,
 }: GeneralSettingsTabProps) {
+  const showToast = useStore((s) => s.showToast)
+
+  const handleOpenLogDir = async () => {
+    try {
+      await openTauriLogDir()
+    } catch (err) {
+      console.error('打开日志目录失败：', err)
+      showToast(typeof err === 'string' ? err : '打开日志目录失败', 'error')
+    }
+  }
+
   return (
     <div className="space-y-8">
       <section className="space-y-4">
@@ -308,6 +321,44 @@ export default function GeneralSettingsTab({
           </div>
         </div>
       </section>
+      {isTauri && (
+        <section className="space-y-4">
+          <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">诊断</h4>
+          <div className="block">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="block text-sm text-gray-600 dark:text-gray-300">写入日志文件</span>
+              <button
+                type="button"
+                onClick={() => commitSettings({ ...draft, writeLogFile: !draft.writeLogFile })}
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.writeLogFile ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                role="switch"
+                aria-checked={draft.writeLogFile}
+                aria-label="写入日志文件"
+              >
+                <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.writeLogFile ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
+              </button>
+            </div>
+            <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+              记录警告和错误，便于排查问题。按 F12 可打开开发者工具。
+            </div>
+          </div>
+          <div className="block">
+            <div className="mb-1 flex items-center justify-between gap-3">
+              <span className="block text-sm text-gray-600 dark:text-gray-300">日志目录</span>
+              <button
+                type="button"
+                onClick={handleOpenLogDir}
+                className="shrink-0 rounded-xl border border-transparent bg-black/[0.04] px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-black/[0.07] hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white"
+              >
+                打开
+              </button>
+            </div>
+            <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
+              日志保存在数据目录的 logs 文件夹中，反馈问题时可以附上。
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   )
 }

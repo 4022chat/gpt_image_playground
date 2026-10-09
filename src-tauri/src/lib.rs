@@ -1,3 +1,4 @@
+mod diagnostics;
 mod storage;
 
 use tauri::Manager;
@@ -14,6 +15,8 @@ pub fn run() {
             let _ = win.show();
             let _ = win.set_focus();
         }))
+        // 紧随 single-instance 注册：第二个实例在此之前已退出，不会与已有实例同时写日志文件
+        .plugin(diagnostics::plugin())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -43,6 +46,8 @@ pub fn run() {
             storage::commands::kv_remove,
             storage::commands::storage_info,
             storage::commands::storage_open_dir,
+            diagnostics::log_set_enabled,
+            diagnostics::log_open_dir,
         ])
         .setup(|app| {
             // 安装版由 NSIS 注册协议。开发版只在设置了 GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK 时才注册，
@@ -52,7 +57,7 @@ pub fn run() {
             if std::env::var_os("GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK").is_some() {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 if let Err(err) = app.deep_link().register_all() {
-                    eprintln!("[deep-link] 注册协议失败：{err}");
+                    log::error!("注册 deep link 协议失败：{err}");
                 }
             }
             // 存储需在主窗口创建前就绪，前端加载后立即会读取任务和图片
@@ -66,7 +71,7 @@ pub fn run() {
                 .filter(|dir| match std::fs::create_dir_all(dir) {
                     Ok(()) => true,
                     Err(err) => {
-                        eprintln!("[storage] 无法创建 WebView 数据目录，改用默认位置：{err}");
+                        log::warn!("无法创建 WebView 数据目录，改用默认位置：{err}");
                         false
                     }
                 });
