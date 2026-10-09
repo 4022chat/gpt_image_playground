@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -50,6 +50,7 @@ export default function ConfirmDialog() {
   const [canConfirm, setCanConfirm] = useState(true)
   const [checkboxChecked, setCheckboxChecked] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const delay = confirmDialog?.minConfirmDelayMs ?? 0
@@ -78,7 +79,7 @@ export default function ConfirmDialog() {
   }
 
   useCloseOnEscape(Boolean(confirmDialog) && canConfirm, handleClose)
-  usePreventBackgroundScroll(Boolean(confirmDialog))
+  usePreventBackgroundScroll(Boolean(confirmDialog), panelRef)
 
   if (!confirmDialog) return null
   const isDestructive = confirmDialog.title.includes('删除') || confirmDialog.title.includes('清空')
@@ -96,7 +97,8 @@ export default function ConfirmDialog() {
     >
       <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
       <div
-        className="relative bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-white/50 dark:border-white/[0.08] rounded-3xl shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] max-w-sm w-full p-6 z-10 ring-1 ring-black/5 dark:ring-white/10 animate-confirm-in"
+        ref={panelRef}
+        className={`relative bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl border border-white/50 dark:border-white/[0.08] rounded-3xl shadow-[0_8px_40px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] ${confirmDialog.content ? 'max-w-md' : 'max-w-sm'} w-full max-h-full flex flex-col p-6 z-10 ring-1 ring-black/5 dark:ring-white/10 animate-confirm-in`}
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="mb-2 flex items-center gap-2 text-base font-bold text-gray-800 dark:text-gray-100">
@@ -112,9 +114,15 @@ export default function ConfirmDialog() {
           )}
           {confirmDialog.title}
         </h3>
-        <p className={`text-sm text-gray-500 dark:text-gray-400 ${confirmDialog.checkbox ? 'mb-4' : 'mb-6'} leading-relaxed whitespace-pre-line ${confirmDialog.messageAlign === 'center' ? 'text-center' : ''}`}>
+        <p className={`text-sm text-gray-500 dark:text-gray-400 ${confirmDialog.content ? 'mb-3' : confirmDialog.checkbox ? 'mb-4' : 'mb-6'} leading-relaxed whitespace-pre-line ${confirmDialog.messageAlign === 'center' ? 'text-center' : ''}`}>
           {renderMessage(confirmDialog.message)}
         </p>
+        {confirmDialog.content && (
+          // 内容过长时只滚动这一区域，标题和按钮始终可见
+          <div className={`custom-scrollbar -mx-2 max-h-[min(60vh,32rem)] min-h-0 overflow-y-auto overscroll-contain px-2 ${confirmDialog.checkbox ? 'mb-4' : 'mb-6'}`}>
+            {confirmDialog.content}
+          </div>
+        )}
         {confirmDialog.checkbox && (
           <Checkbox
             checked={checkboxChecked}

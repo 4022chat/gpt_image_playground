@@ -189,6 +189,7 @@
 | `VITE_DEFAULT_UI_FONT` | `DEFAULT_UI_FONT` | 默认界面字体：`builtin`（内置字体，未设置时的默认值）、`system`（系统字体，不加载字体文件），其他值视为本机已安装的字体名称。用户在“设置 → 习惯配置 → 外观”中另行选择后以用户设置为准 |
 | `VITE_DEFAULT_MONO_FONT` | `DEFAULT_MONO_FONT` | 默认代码字体，取值规则同 `VITE_DEFAULT_UI_FONT` |
 | `VITE_BUILTIN_FONT_SOURCE` | `BUILTIN_FONT_SOURCE` | 内置字体的加载来源：`cdn`（从公共 CDN 加载）或 `local`（从本站加载随项目分发的字体文件，位于 [`fonts/`](fonts)）。未设置时为 `cdn`。用户界面中只显示“内置字体”，不区分来源 |
+| `VITE_WEB_APP_URL` | — | 仅桌面客户端使用，在 `src-tauri/.env` 中设置：客户端“复制导入 URL”生成的链接和读取公告使用的网页版地址。未设置时复制的链接改为 `gpt-image-playground://` 开头的 deep link，且不显示公告；网页版始终使用当前页面地址 |
 
 > **未开启上述限制时的默认行为**：
 > - **参数更新**：API 地址、模型、超时等参数会与上一次部署快照比较；部署值发生变化时覆盖一次本地值，之后保留用户的本地修改，直到部署值再次变更。
@@ -199,7 +200,7 @@
 
 > 兼容提示：旧变量 `VITE_SHOW_DEFAULT_CONFIG_ONLY`／`SHOW_DEFAULT_CONFIG_ONLY` 仍可使用，等同于对应的 `SHOW_PRESET_CONFIG_ONLY`。
 
-> 桌面客户端的默认字体由 [`src-tauri/.env`](src-tauri/.env) 中的 `VITE_DEFAULT_UI_FONT`／`VITE_DEFAULT_MONO_FONT` 决定，内置字体的加载来源由 `VITE_BUILTIN_FONT_SOURCE` 决定，本仓库默认 `builtin` 与 `local`（使用安装包自带的字体文件，无需联网）。自行构建客户端时，可在 `src-tauri/.env.local`（不提交）中覆盖；网页版使用上表中根目录的同名环境变量。
+> 桌面客户端的默认字体由 [`src-tauri/.env`](src-tauri/.env) 中的 `VITE_DEFAULT_UI_FONT`／`VITE_DEFAULT_MONO_FONT` 决定，内置字体的加载来源由 `VITE_BUILTIN_FONT_SOURCE` 决定，本仓库默认 `builtin` 与 `local`（使用安装包自带的字体文件，无需联网）；`VITE_WEB_APP_URL` 本仓库默认为维护者的网页版地址。自行构建客户端时，可在 `src-tauri/.env.local`（不提交）中覆盖（例如改为自己的部署地址，或留空以改用 deep link）；网页版使用上表中根目录的同名环境变量。
 
 ### 部署方式
 
@@ -444,6 +445,13 @@ npm run build
 | `profileId` | 目标配置 ID；匹配到同 ID 配置时直接更新 | `?profileId=my-service` |
 | `transparentBackgroundMethod` | 透明背景实现方式：`api`（原生）或 `local`（本地后处理） | `?transparentBackgroundMethod=local` |
 
+打开带参数的网页链接时，页面会先弹出确认，列出将要导入的配置名称、API 地址、模型以及是否包含 API Key，确认后才会导入；无论是否导入，链接中的参数都会从地址栏中清除。
+
+在客户端中导入：客户端使用与网页版相同的参数，有以下两种方式，导入前同样会弹出确认。
+
+- **复制链接后切回客户端**：在浏览器或其他地方复制带 `apiUrl` 或 `settings` 参数的网页版导入链接（任意部署地址均可），切回客户端即会提示导入。同一条链接只提示一次（本次运行中）；剪贴板内容只在本地识别，不会保存或发送。只带 `apiKey` 或 `profileId` 的链接不会被识别，请改用 deep link 导入。
+- **deep link**：把链接开头换成 `gpt-image-playground://`，例如 `gpt-image-playground://?apiUrl=https://api.example.com/v1&model=gpt-image-2`，点击后会唤起已安装的客户端并提示导入。注意链接中的 API Key 会出现在系统的进程命令行和浏览器历史记录中。
+
 集成示例（New API 聊天系统）：
 
 ```text
@@ -452,6 +460,12 @@ https://gpt-image-playground.cooksleep.dev?apiUrl={address}&apiKey={key}&model={
 
 ```text
 https://cooksleep.github.io/gpt_image_playground?apiUrl={address}&apiKey={key}&model={model}
+```
+
+唤起已安装的客户端（deep link）：
+
+```text
+gpt-image-playground://?apiUrl={address}&apiKey={key}&model={model}
 ```
 
 <a id="preset-config-json"></a>

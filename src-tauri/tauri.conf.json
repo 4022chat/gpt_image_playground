@@ -33,7 +33,7 @@
         "style-src-attr": "'unsafe-inline'",
         "img-src": "'self' data: blob: http: https:",
         "font-src": "'self' data: https://fontsapi.zeoseven.com/442/main/ https://cdn.jsdelivr.net/npm/@lobehub/webfont-harmony-sans-sc@1.0.0/",
-        "connect-src": "'self' ipc: http://ipc.localhost data: blob: https://api.github.com https://gpt-image-playground.cooksleep.dev",
+        "connect-src": "'self' ipc: http://ipc.localhost data: blob: https://api.github.com",
         "worker-src": "'self' blob:",
         "frame-src": "'none'",
         "object-src": "'none'",
@@ -41,6 +41,13 @@
         "form-action": "'none'"
       },
       "freezePrototype": true
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["gpt-image-playground"]
+      }
     }
   },
   "bundle": {

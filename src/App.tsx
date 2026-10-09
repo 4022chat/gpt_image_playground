@@ -1,12 +1,12 @@
-import { useEffect } from 'react'
-import { initStore, restoreExplicitPresetConfig, useStore } from './store'
-import { buildSettingsFromUrlParams, clearUrlSettingParams, getExplicitUrlSettingsIds, hasUrlSettingParams } from './lib/urlSettings'
+import { useEffect, useState } from 'react'
+import { initStore, useStore } from './store'
+import { clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { createDefaultOpenAIProfile, hasDefaultPresetConfig, isAgentTextApiProfile, normalizeSettings } from './lib/apiProfiles'
 import { getCustomProviderConfigUrl, hasEmbeddedDefaultConfig, loadCustomProviderSettingsFromUrl, loadEmbeddedDefaultConfig } from './lib/customProviderConfigUrl'
 import { getDefaultPresetProfileId, getPresetProfileIds, isPresetConfigOnlyEnabled, setPresetConfig } from './lib/presetConfig'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import { useAppFonts } from './hooks/useAppFonts'
-import type { AppSettings } from './types'
+import { promptImportLink, useImportLinks } from './hooks/useImportLinks'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
@@ -31,9 +31,12 @@ export default function App() {
   const appMode = useStore((s) => s.appMode)
   const filterFavorite = useStore((s) => s.filterFavorite)
   const activeFavoriteCollectionId = useStore((s) => s.activeFavoriteCollectionId)
+  const [startupImportDone, setStartupImportDone] = useState(false)
   useDockerApiUrlMigrationNotice()
   useAppFonts()
   useGlobalClickSuppression()
+  // 运行中的链接导入要等启动时的预置配置写入完，否则会被启动流程覆盖
+  useImportLinks(startupImportDone)
 
   useEffect(() => {
     const err = getTauriStorageLoadError()
@@ -66,33 +69,20 @@ export default function App() {
     if (defaultConfigImportStarted) return
     defaultConfigImportStarted = true
 
+    // 链接中的设置参数先取出留待确认，再立即从地址栏清除，避免刷新后再次提示或密钥留在地址栏
     const searchParams = new URLSearchParams(window.location.search)
+    const importParams = hasUrlSettingParams(searchParams) ? new URLSearchParams(searchParams) : null
+    if (importParams) {
+      clearUrlSettingParams(searchParams)
+      const nextSearch = searchParams.toString()
+      window.history.replaceState(null, '', `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`)
+    }
+
     const customProviderConfigUrl = getCustomProviderConfigUrl()
     const embeddedDefaultConfig = hasEmbeddedDefaultConfig()
     const loadDefaultConfig = () => embeddedDefaultConfig
       ? Promise.resolve().then(() => loadEmbeddedDefaultConfig())
       : loadCustomProviderSettingsFromUrl(customProviderConfigUrl)
-
-    const applyUrlSettings = async (baseSettings: Partial<AppSettings>) => {
-      const ids = getExplicitUrlSettingsIds(searchParams)
-      const restored = await restoreExplicitPresetConfig(ids)
-      const restoredSettings = useStore.getState().settings
-      const sourceSettings = restored
-        ? { ...restoredSettings, ...baseSettings, customProviders: restoredSettings.customProviders, profiles: restoredSettings.profiles }
-        : baseSettings
-      const nextSettings = buildSettingsFromUrlParams(sourceSettings, searchParams)
-      return Object.keys(nextSettings).length ? nextSettings : sourceSettings
-    }
-
-    const clearAppliedUrlSettings = () => {
-      if (!hasUrlSettingParams(searchParams)) return
-
-      clearUrlSettingParams(searchParams)
-
-      const nextSearch = searchParams.toString()
-      const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`
-      window.history.replaceState(null, '', nextUrl)
-    }
 
     void initStore()
       .then(async () => {
@@ -140,17 +130,17 @@ export default function App() {
                 : defaultPresetId ?? [...presetIds][0],
             })
           : current.settings
-        current.setSettings(await applyUrlSettings(settings))
-        clearAppliedUrlSettings()
+        current.setSettings(settings)
       })
       .catch((error) => {
         console.warn('Failed to import preset config:', error)
         setPresetConfig(null)
-        const state = useStore.getState()
-        void applyUrlSettings(state.settings).then((settings) => {
-          useStore.getState().setSettings(settings)
-          clearAppliedUrlSettings()
-        })
+      })
+      .finally(() => {
+        // 不等待用户确认，客户端的剪贴板和 deep link 监听依赖它
+        setStartupImportDone(true)
+        // 预置配置写入后再提示，确认框按导入前的实际设置描述变化
+        if (importParams) promptImportLink(importParams, true)
       })
   }, [])
 

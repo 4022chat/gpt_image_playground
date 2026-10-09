@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import type {
@@ -425,6 +426,8 @@ interface AppState {
   confirmDialog: {
     title: string
     message: string
+    /** 显示在 message 下方的自定义内容，过长时可滚动 */
+    content?: ReactNode
     checkbox?: {
       label: string
       defaultChecked?: boolean

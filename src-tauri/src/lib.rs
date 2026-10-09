@@ -4,7 +4,8 @@ use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
-        // single-instance 需最先注册，第二个实例启动时把已有主窗口带到前台后退出
+        // single-instance 需最先注册，第二个实例启动时把已有主窗口带到前台后退出。
+        // 开启 deep-link feature 后，第二个实例收到的 deep link 会先转交 deep-link 插件，由前端监听导入
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let Some(win) = app.get_webview_window("main") else {
                 return;
@@ -13,6 +14,8 @@ pub fn run() {
             let _ = win.show();
             let _ = win.set_focus();
         }))
+        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
@@ -40,6 +43,16 @@ pub fn run() {
             storage::commands::storage_open_dir,
         ])
         .setup(|app| {
+            // 安装版由 NSIS 注册协议。开发版只在设置了 GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK 时才注册，
+            // 注册会把 HKCU 下的协议改为指向当前开发版程序，覆盖安装版的注册；
+            // 之后需重装正式版，或删除 HKCU\Software\Classes\gpt-image-playground，才能恢复
+            #[cfg(all(debug_assertions, windows))]
+            if std::env::var_os("GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK").is_some() {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(err) = app.deep_link().register_all() {
+                    eprintln!("[deep-link] 注册协议失败：{err}");
+                }
+            }
             // 存储需在主窗口创建前就绪，前端加载后立即会读取任务和图片
             let state = storage::init();
             // WebView2 数据放在数据目录的 webview/ 下，随安装目录走；数据目录不可用时用默认位置，不影响窗口创建

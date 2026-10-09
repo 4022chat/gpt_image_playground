@@ -42,6 +42,7 @@ import {
 } from '../lib/presetConfig'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createCustomProfileImportUrl } from '../lib/profileImportUrl'
+import { getProfileImportBaseUrl, handledImportLinks } from '../lib/importLink'
 import { requestBrowserNotificationPermission, type BrowserNotificationPermissionResult } from '../lib/browserNotification'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, REASONING_EFFORT_VALUES, type AgentApiConfigMode, type ApiProfile, type AppSettings, type CustomProviderDefinition, type ReasoningEffort, type ZipDownloadRoute } from '../types'
 import {
@@ -466,7 +467,8 @@ export default function SettingsModal() {
   }
 
   const createProfileImportUrl = (profile: ApiProfile, options: ProfileImportUrlOptions) => {
-    const url = new URL(window.location.href)
+    const pageUrl = getProfileImportBaseUrl(isTauri, window.location.href)
+    const url = new URL(pageUrl)
     url.search = ''
     url.hash = ''
 
@@ -499,7 +501,7 @@ export default function SettingsModal() {
     }
 
     return createCustomProfileImportUrl(
-      window.location.href,
+      pageUrl,
       profile,
       draft.customProviders.find((item) => item.id === profile.provider),
       options,
@@ -508,8 +510,12 @@ export default function SettingsModal() {
 
   const copyProfileImportUrl = async (profile: ApiProfile, options: ProfileImportUrlOptions) => {
     try {
-      await copyTextToClipboard(createProfileImportUrl(profile, options))
-      showToast(options.includeApiKey ? '导入 URL 已复制（包含 API Key）' : '导入 URL 已复制', 'success')
+      const url = createProfileImportUrl(profile, options)
+      await copyTextToClipboard(url)
+      // 客户端切回窗口时会检查剪贴板，本机刚复制的链接不再提示导入
+      handledImportLinks.add(url)
+      const message = options.includeApiKey ? '导入 URL 已复制（包含 API Key）' : '导入 URL 已复制'
+      showToast(isTauri ? `${message}，在其他设备的客户端中复制此链接后切回客户端即可导入` : message, 'success')
       setCopyImportUrlProfile(null)
     } catch (err) {
       showToast(getClipboardFailureMessage('复制导入 URL 失败', err), 'error')
@@ -1481,7 +1487,7 @@ export default function SettingsModal() {
                     ) : activeProfile.provider === 'fal' ? (
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_FAL_BASE_URL}</code>；填写自定义地址时将作为 fal.ai 代理 URL。</span>
                     ) : (
-                      <span>末尾带 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/</code> 时直接使用该地址拼接接口，不补 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/v1</code> 前缀；支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>。</span>
+                      <span>末尾带 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/</code> 时直接使用该地址拼接接口，不补 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/v1</code> 前缀；支持通过链接参数导入（打开时会先确认）：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code>。</span>
                     )}
                   </div>
                 </label>
@@ -1546,7 +1552,7 @@ export default function SettingsModal() {
                   </button>
                 </div>
                 <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
+                  支持通过链接参数导入：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
                 </div>
               </div>
 
@@ -1568,7 +1574,7 @@ export default function SettingsModal() {
                     className="w-full rounded-xl border border-transparent bg-black/[0.04] px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:bg-white/[0.06] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
                 <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                    支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=images</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=responses</code>。
+                    支持通过链接参数导入：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=images</code> 或 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">apiMode=responses</code>。
                   </div>
                 </div>
               )}
@@ -1603,7 +1609,7 @@ export default function SettingsModal() {
                   )}
                   多个模型以逗号分隔，可在首页的模型参数中切换。
                   {activeProfile.provider === 'openai' && (
-                    <>支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?model=</code>。</>
+                    <>支持通过链接参数导入：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?model=</code>。</>
                   )}
                 </div>
               </label>
@@ -1623,7 +1629,7 @@ export default function SettingsModal() {
                   <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
                     Responses API 的 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">image_generation</code> 工具需要使用 GPT Image 模型，例如 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">{DEFAULT_IMAGES_MODEL}</code>。
                     留空时不发送工具模型 ID，保持 API 默认值。
-                    支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?imageGenerationModel=</code>。
+                    支持通过链接参数导入：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?imageGenerationModel=</code>。
                   </div>
                 </label>
               )}
@@ -1646,7 +1652,7 @@ export default function SettingsModal() {
                     </div>
                   </div>
                   <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                    用于指导模型在执行任务时的思考深度，更高的档位会使模型花费更长时间进行思考，有助于提升 Agent 模式下模型完成复杂任务的能力。并非所有模型都支持全部推理强度。支持通过查询参数覆盖：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?reasoningEffort=high</code>。
+                    用于指导模型在执行任务时的思考深度，更高的档位会使模型花费更长时间进行思考，有助于提升 Agent 模式下模型完成复杂任务的能力。并非所有模型都支持全部推理强度。支持通过链接参数导入：<code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">?reasoningEffort=high</code>。
                   </div>
                 </div>
               )}
@@ -1763,7 +1769,7 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    开启后应用 Codex CLI 实际支持的参数。支持查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>。
+                    开启后应用 Codex CLI 实际支持的参数。支持通过链接参数导入：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">codexCli=true</code>。
                   </div>
                 </div>
               )}
