@@ -4,13 +4,16 @@ import { createRoot } from 'react-dom/client'
 import 'streamdown/styles.css'
 import 'katex/dist/katex.min.css'
 import './index.css'
-import { installExternalLinkHandler, isTauri } from './lib/platform'
+import { installBrowserBehaviorGuards, installExternalLinkHandler, isTauri } from './lib/platform'
 import { installTauriStorageFlush, loadTauriStorage } from './lib/tauriStorage'
 import { installMobileViewportGuards } from './lib/viewport'
 
 installMobileViewportGuards()
 
-if (isTauri) installExternalLinkHandler()
+if (isTauri) {
+  installExternalLinkHandler()
+  installBrowserBehaviorGuards()
+}
 
 // 客户端不注册 Service Worker，避免缓存与客户端版本更新冲突
 if (!isTauri && 'serviceWorker' in navigator) {

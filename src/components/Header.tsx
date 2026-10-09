@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { useVersionCheck } from '../hooks/useVersionCheck'
 import { useTooltip } from '../hooks/useTooltip'
+import { isTauri } from '../lib/platform'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
@@ -252,7 +253,8 @@ export default function Header() {
             </button>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {!isPwaInstalled && (
+            {/* 客户端本身就是安装版，不显示 PWA 安装入口 */}
+            {!isTauri && !isPwaInstalled && (
               <div
                 className="relative"
                 {...installTooltip.handlers}

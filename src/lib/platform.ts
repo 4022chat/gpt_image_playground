@@ -93,3 +93,38 @@ export function installExternalLinkHandler() {
     return null
   }
 }
+
+// 刷新、前进后退、查找、打印、查看源码、保存页面等浏览器快捷键，在客户端中会刷掉进行中的任务或打开无关界面；
+// 缩放（Ctrl+加减号/0）和开发者工具（F12、Ctrl+Shift+I）不在其中
+const BLOCKED_KEYS = new Set(['f5', 'f3', 'f7', 'browserrefresh', 'browserback', 'browserforward', 'browsersearch'])
+const BLOCKED_CTRL_KEYS = new Set(['r', 'p', 'f', 'g', 'u', 's'])
+const EDITABLE_INPUT_TYPES = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number'])
+
+/**
+ * 客户端中屏蔽浏览器自带的快捷键和右键菜单。
+ * 不用 WebView2 的 AreBrowserAcceleratorKeysEnabled，它会连同 F12 和缩放快捷键一起禁用；
+ * 这里只阻止默认行为，不阻止事件传播，应用自己的快捷键和右键菜单照常收到事件
+ */
+export function installBrowserBehaviorGuards() {
+  window.addEventListener('keydown', (e) => {
+    // 自动填充等派发的 keydown 可能没有 key
+    const key = e.key?.toLowerCase()
+    if (BLOCKED_KEYS.has(key) || ((e.ctrlKey || e.metaKey) && !e.altKey && BLOCKED_CTRL_KEYS.has(key))) e.preventDefault()
+  }, true)
+
+  window.addEventListener('contextmenu', (e) => {
+    const el = e.target
+    // 输入框中保留剪切、复制、粘贴；复选框等非文本输入弹出的是整页菜单（含刷新、打印），同样屏蔽
+    const editable = el instanceof HTMLElement && (
+      el.isContentEditable
+      || el instanceof HTMLTextAreaElement
+      || (el instanceof HTMLInputElement && EDITABLE_INPUT_TYPES.has(el.type))
+    )
+    if (editable) return
+    // 在选中的文字上右键时保留菜单，方便复制；在选区外右键弹出的是整页菜单，仍然屏蔽
+    const sel = window.getSelection()
+    const onSelection = sel && !sel.isCollapsed && sel.rangeCount > 0 && Array.from(sel.getRangeAt(0).getClientRects()).some((r) =>
+      e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom)
+    if (!onSelection) e.preventDefault()
+  }, true)
+}

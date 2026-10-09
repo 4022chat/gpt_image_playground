@@ -263,7 +263,9 @@ export default function GeneralSettingsTab({
             </button>
           </div>
           <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-            开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。
+            {isTauri
+              ? '开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送系统通知。如果没有收到通知，请检查 Windows 设置中本应用的通知开关。'
+              : '开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。'}
           </div>
         </div>
       </section>

@@ -80,6 +80,25 @@ describe('tauriStorage', () => {
     expect(invoke).toHaveBeenCalledTimes(1)
   })
 
+  it('关闭确认取消时阻止关闭且不写入，确认后写完再关', async () => {
+    const { tauriStorage, installTauriStorageFlush, setTauriCloseGuard } = await setup()
+    await installTauriStorageFlush()
+    const handler = onCloseRequested.mock.lastCall?.[0] as (event: { preventDefault: () => void }) => Promise<void>
+    tauriStorage.setItem('k', 'v')
+
+    setTauriCloseGuard(async () => false)
+    const cancelled = { preventDefault: vi.fn() }
+    await handler(cancelled)
+    expect(cancelled.preventDefault).toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+
+    setTauriCloseGuard(async () => true)
+    const confirmed = { preventDefault: vi.fn() }
+    await handler(confirmed)
+    expect(confirmed.preventDefault).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledWith('kv_set', { key: 'k', value: 'v' }, undefined)
+  })
+
   it('页面隐藏时立即写入', async () => {
     const { tauriStorage, installTauriStorageFlush } = await setup()
     await installTauriStorageFlush()

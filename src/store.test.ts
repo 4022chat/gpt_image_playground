@@ -4,7 +4,7 @@ import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
 import type { AgentConversation, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
-import { hasActiveDataOperations } from './lib/dataOperations'
+import { hasActiveDataOperations, hasInterruptibleOperations, trackDataTransfer } from './lib/dataOperations'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentConversationTaskIds, getAgentRoundTaskIds, remapAgentRoundMentionsForPathChange } from './lib/agentConversationState'
 import { cleanStaleAgentInputDrafts } from './lib/inputDraftState'
 import { normalizePersistedState } from './lib/persistedState'
@@ -222,6 +222,35 @@ describe('data operation locking', () => {
       }],
     })])).toBe(true)
     expect(hasActiveDataOperations([task()], [])).toBe(false)
+  })
+
+  it('closing the client only warns about work that cannot resume after restart', async () => {
+    expect(hasInterruptibleOperations([task({ status: 'running' })], [])).toBe(true)
+    expect(hasInterruptibleOperations([task({ status: 'running', apiProvider: 'fal', falRequestId: 'req', falEndpoint: 'fal-ai/x' })], [])).toBe(false)
+    expect(hasInterruptibleOperations([task({ status: 'running', apiProvider: 'fal', falRequestId: 'req' })], [])).toBe(true)
+    expect(hasInterruptibleOperations([task({ status: 'running', customTaskId: 'job' })], [])).toBe(false)
+    expect(hasInterruptibleOperations([task({ falRecoverable: true, apiProvider: 'fal', falRequestId: 'req', falEndpoint: 'fal-ai/x' })], [])).toBe(false)
+    expect(hasInterruptibleOperations([task()], [agentConversation({
+      rounds: [{
+        id: 'round-a',
+        index: 1,
+        userMessageId: 'message-a',
+        prompt: 'prompt',
+        inputImageIds: [],
+        outputTaskIds: [],
+        status: 'running',
+        error: null,
+        createdAt: 1,
+        finishedAt: null,
+      }],
+    })])).toBe(true)
+
+    let release = () => {}
+    const transfer = trackDataTransfer(() => new Promise<void>((resolve) => { release = resolve }))
+    expect(hasInterruptibleOperations([], [])).toBe(true)
+    release()
+    await transfer
+    expect(hasInterruptibleOperations([], [])).toBe(false)
   })
 })
 

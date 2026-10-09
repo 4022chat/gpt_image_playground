@@ -73,6 +73,13 @@ export const tauriStorage: StateStorage = {
   },
 }
 
+let closeGuard: (() => boolean | Promise<boolean>) | undefined
+
+/** 设置关闭窗口前的确认；返回 false 时保持窗口打开。store 加载后由 App 设置 */
+export function setTauriCloseGuard(guard: () => boolean | Promise<boolean>) {
+  closeGuard = guard
+}
+
 /** 关闭窗口前写完再关；真正保证不丢失的是防抖写入和 onCloseRequested */
 export async function installTauriStorageFlush() {
   // 附带写入：Windows 客户端最小化不会让页面变为 hidden（且已关闭被遮挡窗口的后台化），这两个事件基本不会触发
@@ -80,7 +87,10 @@ export async function installTauriStorageFlush() {
     if (document.visibilityState === 'hidden') void flushTauriStorage()
   })
   window.addEventListener('pagehide', () => void flushTauriStorage())
-  // 处理函数返回后 Tauri 才会销毁窗口。每个监听返回后都会各自销毁窗口，
-  // 以后实现“有任务运行时关闭确认”时必须与这里共用同一个处理函数，不能另外注册监听
-  await getCurrentWindow().onCloseRequested(() => flushTauriStorage())
+  // 处理函数返回后 Tauri 才会销毁窗口，且每个监听返回后都会各自销毁窗口，所以关闭确认和写入共用这一个监听：
+  // 先确认（等待用户选择期间窗口保持打开），取消则阻止关闭；确认或无需确认时写完设置再关
+  await getCurrentWindow().onCloseRequested(async (event) => {
+    if (closeGuard && !(await closeGuard())) return event.preventDefault()
+    await flushTauriStorage()
+  })
 }

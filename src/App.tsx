@@ -6,6 +6,7 @@ import { getCustomProviderConfigUrl, hasEmbeddedDefaultConfig, loadCustomProvide
 import { getDefaultPresetProfileId, getPresetProfileIds, isPresetConfigOnlyEnabled, setPresetConfig } from './lib/presetConfig'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import { useAppFonts } from './hooks/useAppFonts'
+import { useCloseConfirm } from './hooks/useCloseConfirm'
 import { promptImportLink, useImportLinks } from './hooks/useImportLinks'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
@@ -35,6 +36,7 @@ export default function App() {
   useDockerApiUrlMigrationNotice()
   useAppFonts()
   useGlobalClickSuppression()
+  useCloseConfirm()
   // 运行中的链接导入要等启动时的预置配置写入完，否则会被启动流程覆盖
   useImportLinks(startupImportDone)
 

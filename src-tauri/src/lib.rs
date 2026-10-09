@@ -19,6 +19,8 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
+        // 插件的初始化脚本会替换 window.Notification，前端沿用 Web Notification 的调用即可发出系统通知
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             storage::commands::tasks_get_all,
             storage::commands::task_put,

@@ -1,5 +1,6 @@
 import { zipSync } from 'fflate'
 import type { TaskRecord } from '../types'
+import { trackDataTransfer } from './dataOperations'
 import { getNumberedFileNameBase, sanitizeFileNamePart } from './exportFileName'
 import { ensureImageCached } from './imageCache'
 import { apiFetch } from './platform'
@@ -53,41 +54,43 @@ export async function downloadImageIds(imageIds: string[], fileNameBase = 'image
 
 export async function downloadImageEntriesAsZip(entries: DownloadImageZipEntry[], zipFileNameBase = 'images'): Promise<DownloadImagesResult> {
   if (entries.length === 0) return { successCount: 0, failCount: 0 }
+  // 打包期间计入进行中的数据操作，客户端关闭窗口时会先确认
+  return trackDataTransfer(async () => {
+    let successCount = 0
+    let failCount = 0
+    const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
+    const usedNames = new Set<string>()
 
-  let successCount = 0
-  let failCount = 0
-  const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
-  const usedNames = new Set<string>()
-
-  for (let index = 0; index < entries.length; index++) {
-    const entry = entries[index]
-    try {
-      const blob = await getImageBlob(entry.imageId)
-      const order = String(index + 1).padStart(2, '0')
-      const base = sanitizeFileNamePart(entry.fileNameBase || `image-${order}`) || `image-${order}`
-      const ext = getBlobExtension(blob)
-      let fileName = `${base}.${ext}`
-      let duplicateIndex = 2
-      while (usedNames.has(fileName)) {
-        fileName = `${base}-${String(duplicateIndex).padStart(2, '0')}.${ext}`
-        duplicateIndex++
+    for (let index = 0; index < entries.length; index++) {
+      const entry = entries[index]
+      try {
+        const blob = await getImageBlob(entry.imageId)
+        const order = String(index + 1).padStart(2, '0')
+        const base = sanitizeFileNamePart(entry.fileNameBase || `image-${order}`) || `image-${order}`
+        const ext = getBlobExtension(blob)
+        let fileName = `${base}.${ext}`
+        let duplicateIndex = 2
+        while (usedNames.has(fileName)) {
+          fileName = `${base}-${String(duplicateIndex).padStart(2, '0')}.${ext}`
+          duplicateIndex++
+        }
+        usedNames.add(fileName)
+        zipFiles[fileName] = [new Uint8Array(await blob.arrayBuffer()), { mtime: new Date() }]
+        successCount++
+      } catch (err) {
+        console.error(err)
+        failCount++
       }
-      usedNames.add(fileName)
-      zipFiles[fileName] = [new Uint8Array(await blob.arrayBuffer()), { mtime: new Date() }]
-      successCount++
-    } catch (err) {
-      console.error(err)
-      failCount++
     }
-  }
 
-  if (successCount > 0) {
-    const zipped = zipSync(zipFiles, { level: 6 })
-    const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer
-    triggerDownload(new Blob([buffer], { type: 'application/zip' }), `${sanitizeFileNamePart(zipFileNameBase) || 'images'}.zip`)
-  }
+    if (successCount > 0) {
+      const zipped = zipSync(zipFiles, { level: 6 })
+      const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer
+      triggerDownload(new Blob([buffer], { type: 'application/zip' }), `${sanitizeFileNamePart(zipFileNameBase) || 'images'}.zip`)
+    }
 
-  return { successCount, failCount }
+    return { successCount, failCount }
+  })
 }
 
 export function getTaskOutputImageZipEntries(tasks: TaskOutputZipTask[]): DownloadImageZipEntry[] {

@@ -63,7 +63,7 @@ import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
 import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureImageCached, scheduleThumbnailBackfill } from './lib/imageCache'
-import { hasActiveDataOperations } from './lib/dataOperations'
+import { hasActiveDataOperations, isCustomRecoverableTask, isFalRecoverableTask } from './lib/dataOperations'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, createExportBlob, getExportImageEstimatedBytes, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentRoundPath, normalizeAgentConversations, remapAgentRoundMentionsForPathChange, uniqueIds } from './lib/agentConversationState'
@@ -1540,21 +1540,10 @@ export async function initStore() {
     .map((task) => putTask(task)))
   useStore.getState().setTasks(tasks)
   showSupportPromptForExistingLocalData(tasks)
+  // 客户端关闭确认用同样的判断跳过这些任务，它们重启后会继续查询结果
   for (const task of tasks) {
-    if (
-      task.apiProvider === 'fal' &&
-      task.falRequestId &&
-      task.falEndpoint &&
-      (task.status === 'running' || task.falRecoverable)
-    ) {
-      scheduleFalRecovery(task.id, 0)
-    }
-    if (
-      task.customTaskId &&
-      (task.status === 'running' || task.customRecoverable)
-    ) {
-      scheduleCustomRecovery(task.id, 0)
-    }
+    if (isFalRecoverableTask(task)) scheduleFalRecovery(task.id, 0)
+    if (isCustomRecoverableTask(task)) scheduleCustomRecovery(task.id, 0)
   }
 
   // 收集所有任务引用的图片 id
@@ -4584,7 +4573,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       setTimeout(() => URL.revokeObjectURL(url), 1000)
       if (partNumber < plan.length) await new Promise((resolve) => setTimeout(resolve, 150))
     }
-    useStore.getState().showToast(plan.length > 1 ? `已请求下载 ${plan.length} 个 ZIP，请确认浏览器已允许多文件下载` : '数据已导出', 'success')
+    useStore.getState().showToast(plan.length > 1 ? `已请求下载 ${plan.length} 个 ZIP，${isTauri ? '如出现提示，请允许下载多个文件' : '请确认浏览器已允许多文件下载'}` : '数据已导出', 'success')
   } catch (e) {
     console.error('exportData failed', e)
     const detail = e instanceof Error ? e.message.trim() : String(e).trim()

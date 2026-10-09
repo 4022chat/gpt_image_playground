@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
 import { customProviderSupportsNativeTransparentBackground } from '../lib/customProviderCapabilities'
-import { hasActiveDataOperations } from '../lib/dataOperations'
+import { hasActiveDataOperations, trackDataTransfer } from '../lib/dataOperations'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
 import { isTauri } from '../lib/platform'
 import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
@@ -601,11 +601,11 @@ export default function SettingsModal() {
 
   const showNotificationPermissionMessage = (result: Exclude<BrowserNotificationPermissionResult, { ok: true }>) => {
     if (result.reason === 'unsupported') {
-      showToast('当前浏览器不支持系统通知', 'error')
+      showToast(isTauri ? '当前环境不支持系统通知' : '当前浏览器不支持系统通知', 'error')
     } else if (result.reason === 'insecure') {
       showToast('系统通知需要 HTTPS 或 localhost 安全上下文', 'error')
     } else if (result.reason === 'denied') {
-      showToast('通知权限已被浏览器拒绝，请在地址栏左侧的网站设置中手动开启', 'error')
+      showToast(isTauri ? '通知权限已被拒绝，请在 Windows 设置的「通知」中允许本应用发送通知' : '通知权限已被浏览器拒绝，请在地址栏左侧的网站设置中手动开启', 'error')
     } else {
       showToast('没有开启系统通知', 'info')
     }
@@ -672,7 +672,7 @@ export default function SettingsModal() {
     }
     setIsExportingData(true)
     try {
-      await exportData({ exportConfig, exportTasks })
+      await trackDataTransfer(() => exportData({ exportConfig, exportTasks }))
     } finally {
       setIsExportingData(false)
     }
@@ -688,7 +688,7 @@ export default function SettingsModal() {
       }
       setIsImportingData(true)
       try {
-        const imported = await importData(files, { importConfig: presetConfigOnly ? false : importConfig, importTasks })
+        const imported = await trackDataTransfer(() => importData(files, { importConfig: presetConfigOnly ? false : importConfig, importTasks }))
         if (imported) {
           const nextDraft = normalizeSettings(useStore.getState().settings)
           setDraft(nextDraft)
@@ -703,7 +703,7 @@ export default function SettingsModal() {
   }
 
   const handleClearAllData = async () => {
-    await clearData({ clearConfig, clearTasks })
+    await trackDataTransfer(() => clearData({ clearConfig, clearTasks }))
     const nextDraft = normalizeSettings(useStore.getState().settings)
     setDraft(nextDraft)
     setTimeoutInput(String(getActiveApiProfile(nextDraft).timeout))
@@ -1111,7 +1111,7 @@ export default function SettingsModal() {
       const msg = err instanceof Error ? err.message : String(err)
       setCustomProviderImportError(null)
       if (err instanceof Error && err.name === 'NotAllowedError') {
-        showToast('无法读取剪贴板，请允许浏览器访问剪贴板，或直接粘贴到输入框中', 'error')
+        showToast(isTauri ? '无法读取剪贴板，请直接粘贴到输入框中' : '无法读取剪贴板，请允许浏览器访问剪贴板，或直接粘贴到输入框中', 'error')
       } else {
         showToast(msg, 'error')
       }
@@ -1723,7 +1723,7 @@ export default function SettingsModal() {
                 </div>
                 <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
                   {activeCustomProviderSupportsNativeTransparentBackground
-                    ? 'API 原生会请求接口直接生成透明背景，需当前接口支持；本地后处理会生成纯色背景并在浏览器中去除。'
+                    ? `API 原生会请求接口直接生成透明背景，需当前接口支持；本地后处理会生成纯色背景并在${isTauri ? '本地' : '浏览器中'}去除。`
                     : <>当前自定义服务商 Manifest 未映射 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">$params.background</code>，无法使用 API 原生透明背景。</>}
                 </div>
               </div>
@@ -1813,7 +1813,7 @@ export default function SettingsModal() {
                     <ExportIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
                     <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">导出数据</h4>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{isTauri ? '受文件大小限制，过大的备份将自动分片导出为多个文件' : '受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件'}</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-3">
                     <Checkbox
                       checked={exportConfig}
