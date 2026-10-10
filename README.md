@@ -202,6 +202,8 @@
 
 > 桌面客户端的默认字体由 [`src-tauri/.env`](src-tauri/.env) 中的 `VITE_DEFAULT_UI_FONT`／`VITE_DEFAULT_MONO_FONT` 决定，内置字体的加载来源由 `VITE_BUILTIN_FONT_SOURCE` 决定，本仓库默认 `builtin` 与 `local`（使用安装包自带的字体文件，无需联网）；`VITE_WEB_APP_URL` 本仓库默认为维护者的网页版地址。自行构建客户端时，可在 `src-tauri/.env.local`（不提交）中覆盖（例如改为自己的部署地址，或留空以改用 deep link）；网页版使用上表中根目录的同名环境变量。
 
+> 桌面客户端支持应用内更新，构建时会为更新包签名，因此执行 `npm run tauri:build` 前需提供签名私钥及其密码（设置环境变量 `TAURI_SIGNING_PRIVATE_KEY`，值可以是私钥内容，也可以是私钥文件的路径；`TAURI_SIGNING_PRIVATE_KEY_PATH` 只对 `tauri signer sign` 有效，`tauri build` 不读取；同时设置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 为私钥密码），否则构建会失败。本仓库的私钥设有密码，维护者发布时需在仓库的 GitHub Secrets 中同时设置 `TAURI_SIGNING_PRIVATE_KEY`（私钥内容）与 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（私钥密码）。自行构建并分发客户端时，请用 `npx tauri signer generate` 生成自己的密钥，并把 `src-tauri/tauri.conf.json` 中的 `plugins.updater.pubkey` 和更新地址换成自己的。
+
 ### 部署方式
 
 <details>

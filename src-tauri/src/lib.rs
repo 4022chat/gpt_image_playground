@@ -1,6 +1,7 @@
 mod diagnostics;
 mod files;
 mod storage;
+mod update;
 
 use tauri::Manager;
 
@@ -27,6 +28,8 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         // 插件的初始化脚本会替换 window.Notification，前端沿用 Web Notification 的调用即可发出系统通知
         .plugin(tauri_plugin_notification::init())
+        // 只供 Rust 侧的更新命令使用，不向前端开放插件命令
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             storage::commands::tasks_get_all,
             storage::commands::task_put,
@@ -58,6 +61,10 @@ pub fn run() {
             files::download_dir_pick,
             files::download_dir_use,
             files::download_dir_open,
+            update::update_ready,
+            update::update_download,
+            update::update_install,
+            update::update_discard,
         ])
         .manage(files::SaveDirs::default())
         .setup(|app| {
@@ -87,6 +94,8 @@ pub fn run() {
                     }
                 });
             app.manage(state);
+            let info = app.package_info().clone();
+            tauri::async_runtime::spawn_blocking(move || update::cleanup(&info.name, &info.version));
             // 主窗口在 tauri.conf.json 中设为 create: false，改由代码创建以便拦截新窗口。
             // 外部链接由前端转给系统浏览器，其余 target="_blank" 和 window.open 一律拒绝，避免出现不受管理的 WebView2 弹窗
             let builder = tauri::WebviewWindowBuilder::from_config(

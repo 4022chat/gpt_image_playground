@@ -168,6 +168,7 @@ else params = baseParams
   - `package-lock.json` 顶层及根包的 `version`。
   - `public/sw.js` 的 `CACHE_NAME` 版本，确保旧缓存能够在 Service Worker 激活时清理。
   - `RELEASE.md` 标题中的版本号和日期。
+- 客户端更新包由 `tauri build` 用私钥签名（`TAURI_SIGNING_PRIVATE_KEY`，无密码），发布的 Release 中必须包含安装包、对应的 `.sig` 和 `latest.json`，否则客户端的应用内更新会提示找不到更新包；私钥不得提交进仓库。
 - 更新后全局搜索旧版本号，确认没有遗漏仍需同步的位置；历史发布记录中的旧版本号不需要修改。
 - 发布前运行 `npm run build` 和 `npm test`，并复查最终差异。
 
