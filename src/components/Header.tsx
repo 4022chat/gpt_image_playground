@@ -2,19 +2,24 @@ import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { setUpdateModalOpen, useReleaseUpdates } from '../hooks/useReleaseUpdates'
 import { useTooltip } from '../hooks/useTooltip'
+import { detectOs } from '../lib/announcements'
 import { isTauri } from '../lib/platform'
-import { shouldShowUpdate } from '../lib/releaseUpdates'
+import { RELEASES_PAGE_URL, shouldShowUpdate } from '../lib/releaseUpdates'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
-import { EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
+import { DesktopDownloadIcon, EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
+
+// 客户端目前只有 Windows 版，只向网页版的 Windows 用户显示下载入口
+const SHOW_CLIENT_DOWNLOAD = !isTauri
+  && detectOs(navigator.userAgent, (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform, navigator.maxTouchPoints) === 'windows'
 
 function isInstalledPwa() {
   const nav = window.navigator as Navigator & { standalone?: boolean }
@@ -87,6 +92,7 @@ export default function Header() {
   }, [appMode, agentMobileHeaderVisible])
 
   const installTooltip = useTooltip()
+  const clientTooltip = useTooltip()
   const helpTooltip = useTooltip()
   const settingsTooltip = useTooltip()
 
@@ -272,6 +278,27 @@ export default function Header() {
                 </button>
                 <ViewportTooltip visible={installTooltip.visible} className="whitespace-nowrap">
                   安装为应用
+                </ViewportTooltip>
+              </div>
+            )}
+            {/* 窄屏时按钮区空间不足，同样不显示 */}
+            {SHOW_CLIENT_DOWNLOAD && (
+              <div
+                className="relative hidden sm:block"
+                {...clientTooltip.handlers}
+              >
+                <a
+                  href={`${RELEASES_PAGE_URL}/latest`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => dismissAllTooltips()}
+                  className="block p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors"
+                  aria-label="下载客户端"
+                >
+                  <DesktopDownloadIcon className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                </a>
+                <ViewportTooltip visible={clientTooltip.visible} className="whitespace-nowrap">
+                  下载客户端
                 </ViewportTooltip>
               </div>
             )}

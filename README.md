@@ -189,7 +189,7 @@
 | `VITE_DEFAULT_UI_FONT` | `DEFAULT_UI_FONT` | 默认界面字体：`builtin`（内置字体，未设置时的默认值）、`system`（系统字体，不加载字体文件），其他值视为本机已安装的字体名称。用户在“设置 → 习惯配置 → 外观”中另行选择后以用户设置为准 |
 | `VITE_DEFAULT_MONO_FONT` | `DEFAULT_MONO_FONT` | 默认代码字体，取值规则同 `VITE_DEFAULT_UI_FONT` |
 | `VITE_BUILTIN_FONT_SOURCE` | `BUILTIN_FONT_SOURCE` | 内置字体的加载来源：`cdn`（从公共 CDN 加载）或 `local`（从本站加载随项目分发的字体文件，位于 [`fonts/`](fonts)）。未设置时为 `cdn`。用户界面中只显示“内置字体”，不区分来源 |
-| `VITE_WEB_APP_URL` | — | 仅桌面客户端使用，在 `src-tauri/.env` 中设置：客户端“复制导入 URL”生成的链接和读取公告使用的网页版地址。未设置时复制的链接改为 `gpt-image-playground://` 开头的 deep link，且不显示公告；网页版始终使用当前页面地址 |
+| `VITE_WEB_APP_URL` | — | 仅桌面客户端使用，在 `src-tauri/.env` 中设置：客户端“复制导入 URL”生成的链接使用的网页版地址。未设置时复制的链接改为 `gpt-image-playground://` 开头的 deep link；网页版始终使用当前页面地址 |
 
 > **未开启上述限制时的默认行为**：
 > - **参数更新**：API 地址、模型、超时等参数会与上一次部署快照比较；部署值发生变化时覆盖一次本地值，之后保留用户的本地修改，直到部署值再次变更。
@@ -468,6 +468,47 @@ https://cooksleep.github.io/gpt_image_playground?apiUrl={address}&apiKey={key}&m
 
 ```text
 gpt-image-playground://?apiUrl={address}&apiKey={key}&model={model}
+```
+
+<a id="announcements"></a>
+## 📢 公告卡片
+
+[`public/announcements.json`](public/announcements.json) 与公告用到的媒体（`public/announcements/`）随应用一起打包：网页版重新部署、客户端发布新版本后生效，两端都从自身读取，不请求其他站点。启动时按文件顺序筛选出满足条件且未读的公告，以居中卡片逐条显示：有多条时按钮为“下一条”，最后一条为“知道了”；点关闭按钮、按 Esc 或点遮罩会把剩下的公告一并记为已读。已读记录只保存在本地，不进入备份。自行部署时可把该文件改为 `[]` 以关闭公告。
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 必填，唯一标识。已读记录按 id 保存，修改公告后若想再次提示，需换一个 id |
+| `title` | 必填，标题 |
+| `content` | 必填，Markdown 正文；只有一句时居中显示，多段或含列表时左对齐 |
+| `note` | 可选，正文下方的次要说明，纯文本，以较小的灰色文字显示；可用 `\n` 换行 |
+| `when` | 可选，显示条件，缺省时总是显示，语法见下文 |
+| `action` | 可选，主按钮 `{ "label": "下载客户端", "url": "https://..." }` |
+| `media` | 可选，卡片顶部的动画或示意图 `{ "type": "html" \| "image", "src": "announcements/xxx.html", "aspectRatio": "16/9" }`。`src` 是相对于应用的路径，解析后必须与应用同源；`html` 以沙箱 iframe 嵌入（只允许脚本，不接收点击和焦点），客户端的 CSP 不允许内联样式和脚本，页面需引用同目录下的外部 `.css`、`.js` 文件；`image` 支持 png、gif、webp、svg 等；`aspectRatio` 缺省为 16:9 |
+
+**显示条件 `when`**：一个对象，其中每个键都要满足。键为变量名时，值可以是字面量（等于）、数组（等于其中之一），或运算对象 `{ "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "in": 值 }`（同一对象内的多个运算同样都要满足）；键为 `all`、`any`、`not` 时，值为一个条件或条件数组，分别表示全部满足、任一满足、不全部满足。
+
+| 变量 | 取值 |
+|------|------|
+| `platform` | `"web"`（网页版）或 `"client"`（桌面客户端） |
+| `os` | `"windows"`、`"macos"`、`"linux"`、`"android"`、`"ios"` 或 `"other"` |
+| `language` | 浏览器语言，如 `"zh-CN"` |
+| `version` | 当前应用版本，按版本号比较，期望值写成 `0.8.0` 或 `v0.8.0` 形式，如 `{ "gte": "0.8.0" }` |
+| `imageCount` | 画廊中成功生成的图片数（不含 Agent 对话） |
+| `taskCount` | 画廊任务数（含失败的任务） |
+| `standalone` | 网页版是否以“安装为应用”（PWA）方式运行，客户端为 `false` |
+| `now` | 当前时间，与带 `T` 的 ISO 时间比较，请写带时区的 ISO 时间，如 `{ "lt": "2026-12-01T00:00:00+08:00" }`；只写日期视为非法 |
+
+条件只在启动时求值一次。写错变量名或运算符、类型不符（如数量写成字符串）时，该条公告不显示，并在控制台给出提示。示例：
+
+```json
+[
+  { "id": "web-windows", "title": "网页版 Windows 用户", "content": "……", "when": { "platform": "web", "os": "windows" } },
+  { "id": "power-user", "title": "已生成超过 100 张图片", "content": "……", "when": { "imageCount": { "gt": 100 } } },
+  {
+    "id": "until-dec", "title": "12 月前的活动，不在已安装的 PWA 中显示", "content": "……",
+    "when": { "now": { "lt": "2026-12-01T00:00:00+08:00" }, "not": { "standalone": true }, "any": [{ "language": { "in": ["zh-CN", "zh-TW"] } }, { "platform": "client" }] }
+  }
+]
 ```
 
 <a id="preset-config-json"></a>

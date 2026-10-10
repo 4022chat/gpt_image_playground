@@ -2,29 +2,11 @@ import { createRef, useEffect } from 'react'
 import { create } from 'zustand'
 import type { ReleaseCache, ReleaseInfo } from '../lib/releaseUpdates'
 import { getReleasesApiUrl, isReleaseCacheFresh, RELEASE_CACHE_TTL_MS, mergeReleasePage, parseReleaseCache, parseReleasePage } from '../lib/releaseUpdates'
-import { apiFetch, isTauri } from '../lib/platform'
-import { tauriStorage } from '../lib/tauriStorage'
+import { readLocal, writeLocal } from '../lib/localRecord'
+import { apiFetch } from '../lib/platform'
 
 const CACHE_KEY = 'release-cache-v1'
 const IGNORED_KEY = 'ignored-release-version'
-
-// 忽略记录和 Release 缓存只存在本地：网页版用 localStorage，客户端用 SQLite kv；两者都不在设置中，不会进入备份 ZIP
-function readLocal(key: string) {
-  try {
-    return (isTauri ? tauriStorage.getItem(key) : localStorage.getItem(key)) as string | null
-  } catch {
-    return null
-  }
-}
-
-function writeLocal(key: string, value: string) {
-  try {
-    if (isTauri) tauriStorage.setItem(key, value)
-    else localStorage.setItem(key, value)
-  } catch (err) {
-    console.warn('保存更新信息失败：', err)
-  }
-}
 
 interface ReleaseUpdatesState {
   releases: ReleaseInfo[]

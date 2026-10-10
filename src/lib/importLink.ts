@@ -33,7 +33,7 @@ export interface ImportLinkDiffGroup {
 /** 本次运行中已提示过的导入链接，只保存在内存中；本机刚复制的导入链接也加入，切回窗口时不再提示 */
 export const handledImportLinks = new Set<string>()
 
-/** 客户端分享链接与读取公告使用的网页版地址，构建时由 VITE_WEB_APP_URL 注入（客户端读取 src-tauri/.env），未设置时为空 */
+/** 客户端分享链接使用的网页版地址，构建时由 VITE_WEB_APP_URL 注入（客户端读取 src-tauri/.env），未设置时为空 */
 export const WEB_APP_URL = readRuntimeEnv(import.meta.env.VITE_WEB_APP_URL).replace(/\/+$/, '')
 
 export const DEEP_LINK_PROTOCOL = 'gpt-image-playground:'

@@ -149,7 +149,7 @@ function orderImagesWithMaskFirst(images: InputImage[], maskTargetImageId: strin
   return next
 }
 
-function isAgentTask(task: TaskRecord) {
+export function isAgentTask(task: TaskRecord) {
   return task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
 }
 
@@ -159,7 +159,7 @@ function showTaskCompletionNotification(title: string, body: string) {
   showBrowserNotification(title, { body })
 }
 
-function countSuccessfulOutputImages(tasks: TaskRecord[]) {
+export function countSuccessfulOutputImages(tasks: TaskRecord[]) {
   return tasks.reduce((count, task) => count + (task.status === 'done' && !isAgentTask(task) ? task.outputImages.length : 0), 0)
 }
 
