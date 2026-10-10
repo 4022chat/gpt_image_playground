@@ -55,28 +55,31 @@ export async function downloadImageIds(imageIds: string[], fileNameBase = 'image
   const targetDir = dir ?? (isTauri && multiple ? await pickSaveDir() : null)
   if (isTauri && multiple && !targetDir) return { successCount, failCount, canceled: true }
 
-  for (let index = 0; index < imageIds.length; index++) {
-    try {
-      const blob = await getImageBlob(imageIds[index])
-      const order = String(index + 1).padStart(2, '0')
-      const fileName = multiple
-        ? `${fileNameBase}-${order}.${getBlobExtension(blob)}`
-        : `${fileNameBase}.${getBlobExtension(blob)}`
-      // 客户端写入文件时不经过浏览器清洗文件名，收藏夹名称等可能含有非法字符
-      const name = isTauri ? sanitizeFileNamePart(fileName) || `image-${order}.${getBlobExtension(blob)}` : fileName
-      const saved = targetDir ? await saveFileToDir(targetDir, blob, name) : await saveFile(blob, name)
-      if (!saved) return { successCount, failCount, canceled: true }
-      if (isTauri) location = targetDir?.path ?? saved
-      successCount++
-      if (multiple && !targetDir) await delay(100)
-    } catch (err) {
-      console.error(err)
-      if (typeof err === 'string') error = err
-      failCount++
+  // 逐张写入期间计入进行中的数据操作，客户端关闭窗口时会先确认
+  return trackDataTransfer(async () => {
+    for (let index = 0; index < imageIds.length; index++) {
+      try {
+        const blob = await getImageBlob(imageIds[index])
+        const order = String(index + 1).padStart(2, '0')
+        const fileName = multiple
+          ? `${fileNameBase}-${order}.${getBlobExtension(blob)}`
+          : `${fileNameBase}.${getBlobExtension(blob)}`
+        // 客户端写入文件时不经过浏览器清洗文件名，收藏夹名称等可能含有非法字符
+        const name = isTauri ? sanitizeFileNamePart(fileName) || `image-${order}.${getBlobExtension(blob)}` : fileName
+        const saved = targetDir ? await saveFileToDir(targetDir, blob, name) : await saveFile(blob, name)
+        if (!saved) return { successCount, failCount, canceled: true }
+        if (isTauri) location = targetDir?.path ?? saved
+        successCount++
+        if (multiple && !targetDir) await delay(100)
+      } catch (err) {
+        console.error(err)
+        if (typeof err === 'string') error = err
+        failCount++
+      }
     }
-  }
 
-  return { successCount, failCount, location, error }
+    return { successCount, failCount, location, error }
+  })
 }
 
 /** dir 为客户端中已选好的保存目录；未传入时客户端弹出保存对话框 */

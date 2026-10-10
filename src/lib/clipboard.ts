@@ -1,6 +1,10 @@
-import { apiFetch } from './platform'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { apiFetch, isTauri } from './platform'
 
 export async function copyTextToClipboard(text: string) {
+  // 客户端由插件在 Rust 侧写入：navigator.clipboard 在用户激活失效（例如复制前有耗时操作）时会弹出 WebView2 的剪贴板权限框
+  if (isTauri) return await writeText(text)
+
   let asyncClipboardError: unknown = null
 
   if (navigator.clipboard?.writeText) {
@@ -73,7 +77,8 @@ async function writeImageBlobToClipboard(blob: Blob) {
   const clipboardItems: Record<string, Blob | Promise<Blob>> = {}
   const customType = `web ${blob.type}`
 
-  if (isClipboardTypeSupported(customType)) {
+  // 客户端写入 web 自定义格式会弹出 WebView2 的剪贴板权限框，确认前一直挂起，只写标准 PNG
+  if (!isTauri && isClipboardTypeSupported(customType)) {
     clipboardItems[customType] = blob
   }
 

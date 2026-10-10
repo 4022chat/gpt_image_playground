@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
+import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { normalizeBaseUrl } from '../lib/api'
 import { customProviderSupportsNativeTransparentBackground } from '../lib/customProviderCapabilities'
 import { hasActiveDataOperations, trackDataTransfer } from '../lib/dataOperations'
@@ -1069,7 +1070,8 @@ export default function SettingsModal() {
   const handleCustomProviderJsonPaste = async () => {
     setIsImportingJson(true)
     try {
-      const text = await navigator.clipboard.readText()
+      // 客户端中 navigator.clipboard.readText 会弹出 WebView2 的剪贴板权限框，改由插件读取；剪贴板为空或不是文本时插件抛英文错误，按空处理
+      const text = isTauri ? await readText().catch(() => '') : await navigator.clipboard.readText()
       if (!text.trim()) {
         throw new Error('剪贴板为空')
       }
@@ -1115,7 +1117,7 @@ export default function SettingsModal() {
       const msg = err instanceof Error ? err.message : String(err)
       setCustomProviderImportError(null)
       if (err instanceof Error && err.name === 'NotAllowedError') {
-        showToast(isTauri ? '无法读取剪贴板，请直接粘贴到输入框中' : '无法读取剪贴板，请允许浏览器访问剪贴板，或直接粘贴到输入框中', 'error')
+        showToast('无法读取剪贴板，请允许浏览器访问剪贴板，或直接粘贴到输入框中', 'error')
       } else {
         showToast(msg, 'error')
       }
@@ -1817,7 +1819,7 @@ export default function SettingsModal() {
                     <ExportIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
                     <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">导出数据</h4>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{isTauri ? '受文件大小限制，过大的备份将自动分片，导出时选择一个文件夹保存全部分片' : '受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件'}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{isTauri ? `受文件大小限制，过大的备份将自动分片，${draft.saveLocationMode === 'default' ? '全部分片保存到默认保存地址' : '导出时选择一个文件夹保存全部分片'}` : '受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件'}</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-3">
                     <Checkbox
                       checked={exportConfig}

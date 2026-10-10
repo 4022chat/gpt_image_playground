@@ -24,7 +24,7 @@ export function hasInterruptibleOperations(tasks: TaskRecord[], agentConversatio
     || agentConversations.some((conversation) => conversation.rounds.some((round) => round.status === 'running'))
 }
 
-/** 记录进行中的数据导入导出、清空和 ZIP 打包，客户端关闭窗口时据此提示 */
+/** 记录进行中的数据导入导出、清空、ZIP 打包和图片保存，客户端关闭窗口时据此提示 */
 export async function trackDataTransfer<T>(run: () => Promise<T>) {
   dataTransfers++
   try {

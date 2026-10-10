@@ -98,6 +98,9 @@ export function installExternalLinkHandler() {
 // 缩放（Ctrl+加减号/0）和开发者工具（F12、Ctrl+Shift+I）不在其中
 const BLOCKED_KEYS = new Set(['f5', 'f3', 'f7', 'browserrefresh', 'browserback', 'browserforward', 'browsersearch'])
 const BLOCKED_CTRL_KEYS = new Set(['r', 'p', 'f', 'g', 'u', 's'])
+// 单按 Alt 或 F10 会让宿主窗口进入系统菜单模式，期间所有 IPC 停住；按下和松开都要阻止。
+// 只拦截这两个键本身，Alt+F4、Alt+Tab、Alt+Space 和 Alt+滚轮不受影响
+const MENU_KEYS = new Set(['alt', 'f10'])
 const EDITABLE_INPUT_TYPES = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number'])
 
 /**
@@ -109,7 +112,11 @@ export function installBrowserBehaviorGuards() {
   window.addEventListener('keydown', (e) => {
     // 自动填充等派发的 keydown 可能没有 key
     const key = e.key?.toLowerCase()
-    if (BLOCKED_KEYS.has(key) || ((e.ctrlKey || e.metaKey) && !e.altKey && BLOCKED_CTRL_KEYS.has(key))) e.preventDefault()
+    // Shift+F10 用于键盘呼出右键菜单，不拦截
+    if (BLOCKED_KEYS.has(key) || (MENU_KEYS.has(key) && !e.shiftKey) || ((e.ctrlKey || e.metaKey) && !e.altKey && BLOCKED_CTRL_KEYS.has(key))) e.preventDefault()
+  }, true)
+  window.addEventListener('keyup', (e) => {
+    if (MENU_KEYS.has(e.key?.toLowerCase())) e.preventDefault()
   }, true)
 
   window.addEventListener('contextmenu', (e) => {

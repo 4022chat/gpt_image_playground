@@ -33,3 +33,6 @@ tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 tauri-plugin-updater = "2"
 semver = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"

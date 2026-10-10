@@ -96,13 +96,29 @@ pub fn run() {
             app.manage(state);
             let info = app.package_info().clone();
             tauri::async_runtime::spawn_blocking(move || update::cleanup(&info.name, &info.version));
+            // WebView2 在页面加载出来之前是白色背景，深色模式下启动会白闪。页面只跟随系统主题，
+            // 创建窗口时就按系统主题设为 body 的背景色（bg-gray-50 / dark:bg-gray-950）；窗口建好后再设置为时已晚。
+            // 读取失败时按浅色处理
+            #[cfg(windows)]
+            let dark = windows_registry::CURRENT_USER
+                .open(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+                .and_then(|key| key.get_u32("AppsUseLightTheme"))
+                .is_ok_and(|light| light == 0);
+            #[cfg(not(windows))]
+            let dark = false;
+            let bg = if dark {
+                tauri::window::Color(3, 7, 18, 255)
+            } else {
+                tauri::window::Color(249, 250, 251, 255)
+            };
             // 主窗口在 tauri.conf.json 中设为 create: false，改由代码创建以便拦截新窗口。
             // 外部链接由前端转给系统浏览器，其余 target="_blank" 和 window.open 一律拒绝，避免出现不受管理的 WebView2 弹窗
             let builder = tauri::WebviewWindowBuilder::from_config(
                 app.handle(),
                 &app.config().app.windows[0],
             )?
-            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .background_color(bg);
             match webview_dir {
                 Some(dir) => builder.data_directory(dir).build()?,
                 None => builder.build()?,
