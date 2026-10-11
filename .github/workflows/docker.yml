@@ -42,6 +42,9 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      - id: version
+        run: echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -50,17 +53,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # workflow_run 下 github.ref 是默认分支，semver 需从触发运行的 tag 名（head_branch）取；推送 tag 时从 github.ref 取
+      # 版本号从 package.json 读取；手动运行仅在默认分支上更新 latest，避免在旧 tag 上重建时把 latest 退回旧版本
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/gpt_image_playground
           tags: |
-            type=semver,pattern={{version}},value=${{ github.event.workflow_run.head_branch }},enable=${{ github.event_name == 'workflow_run' }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.workflow_run.head_branch }},enable=${{ github.event_name == 'workflow_run' }}
-            type=semver,pattern={{version}},enable=${{ github.event_name != 'workflow_run' }}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name != 'workflow_run' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run' || startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{version}},value=v${{ steps.version.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - uses: docker/build-push-action@v6
         with:
