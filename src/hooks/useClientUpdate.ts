@@ -11,7 +11,6 @@ interface ClientUpdateState {
   progress: UpdateProgress | null
   // 本地有效安装包的版本，可能低于弹窗中的最新版本
   readyVersion: string
-  error: string
 }
 
 /** 客户端应用内更新的状态；放在模块级 store 中，关闭弹窗后下载继续，再次打开仍能看到进度 */
@@ -19,7 +18,6 @@ export const useClientUpdate = create<ClientUpdateState>(() => ({
   status: 'idle',
   progress: null,
   readyVersion: '',
-  error: '',
 }))
 
 const errorMessage = (err: unknown) => err instanceof Error ? err.message : String(err)
@@ -44,11 +42,11 @@ export async function refreshClientUpdate() {
   const version = await readReady()
   // 校验期间可能已开始下载或安装，此时不能用旧结果覆盖状态
   if (isBusy()) return
-  useClientUpdate.setState({ status: version ? 'ready' : 'idle', readyVersion: version ?? '', error: '' })
+  useClientUpdate.setState({ status: version ? 'ready' : 'idle', readyVersion: version ?? '' })
 }
 
 export async function startClientUpdateDownload(version: string) {
-  useClientUpdate.setState({ status: 'downloading', progress: null, error: '' })
+  useClientUpdate.setState({ status: 'downloading', progress: null })
   try {
     await downloadUpdate(version, (progress) => useClientUpdate.setState({ progress }))
     useClientUpdate.setState({ status: 'ready', readyVersion: version })
@@ -56,12 +54,13 @@ export async function startClientUpdateDownload(version: string) {
     console.warn('下载客户端更新失败：', err)
     // 保存失败时原有安装包可能已被删除，也可能仍在，按磁盘上的实际情况显示“安装”或“下载”
     const ready = await readReady()
-    useClientUpdate.setState({ status: ready ? 'ready' : 'idle', readyVersion: ready ?? '', error: errorMessage(err) })
+    useClientUpdate.setState({ status: ready ? 'ready' : 'idle', readyVersion: ready ?? '' })
+    useStore.getState().showToast(errorMessage(err), 'error')
   }
 }
 
 export async function startClientUpdateInstall() {
-  useClientUpdate.setState({ status: 'installing', error: '' })
+  useClientUpdate.setState({ status: 'installing' })
   try {
     // 安装程序启动后应用直接退出，不经过关闭窗口时的写入，先写入尚未保存的设置
     await flushTauriStorageBeforeExit()
@@ -71,7 +70,8 @@ export async function startClientUpdateInstall() {
     console.warn('安装客户端更新失败：', err)
     // 安装包可能已在 Rust 侧校验失败并被删除，重新确认后决定显示“安装”还是“下载”
     const version = await readReady()
-    useClientUpdate.setState({ status: version ? 'ready' : 'idle', readyVersion: version ?? '', error: errorMessage(err) })
+    useClientUpdate.setState({ status: version ? 'ready' : 'idle', readyVersion: version ?? '' })
+    useStore.getState().showToast(errorMessage(err), 'error')
   }
 }
 
@@ -85,11 +85,11 @@ export function requestClientUpdateInstall(latestVersion: string) {
   const busy = hasInterruptibleOperations(state.tasks, state.agentConversations, state.batchProgress)
   const outdated = compareVersions(readyVersion, latestVersion) < 0
   if (!busy && !outdated) return void startClientUpdateInstall()
-  const warning = '当前有任务或数据操作正在进行，安装更新会关闭客户端，进行中的任务和操作会被中断。'
+  const warning = '当前有任务或数据操作正在进行。\n\n安装更新会关闭客户端，并中断这些操作。'
   if (!outdated) {
     state.setConfirmDialog({
       title: '安装更新',
-      message: `${warning}确定要安装吗？`,
+      message: warning,
       confirmText: '安装',
       tone: 'warning',
       action: () => void startClientUpdateInstall(),
@@ -98,7 +98,7 @@ export function requestClientUpdateInstall(latestVersion: string) {
   }
   state.setConfirmDialog({
     title: '发现更新的版本',
-    message: `检测到有更新的版本 v${latestVersion}，已下载的是 v${readyVersion}。${busy ? warning : ''}`,
+    message: `最新版本为 v${latestVersion}，已下载的是 v${readyVersion}。${busy ? `\n\n${warning}` : ''}`,
     buttons: [
       { label: '取消', tone: 'secondary', action: () => {} },
       { label: '下载新版本', tone: 'secondary', action: () => void startClientUpdateDownload(latestVersion) },

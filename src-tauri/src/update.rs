@@ -2,6 +2,7 @@
 //! 通过校验的安装包保存到 <数据目录>/updates/，并记录版本号和 sha256。
 //! 之后无论远端是否已有更新的版本，都直接安装这个已下载的版本，重启应用后仍可安装
 use std::fs;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -95,6 +96,44 @@ fn save(dir: &Path, update: &Update, bytes: &[u8]) -> std::io::Result<()> {
         sha256: format!("{:x}", Sha256::digest(bytes)),
     };
     fs::write(dir.join(META_FILE), serde_json::to_vec(&meta)?)
+}
+
+/// Windows 上文件被其他进程占用（ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION）
+fn is_locked(err: &io::Error) -> bool {
+    cfg!(windows) && matches!(err.raw_os_error(), Some(32 | 33))
+}
+
+/// 保存失败中用户能自行处理的原因给出不带冒号的整句，前端提示会把“标题：详情”截成只剩标题
+fn save_error(err: io::Error) -> String {
+    if is_locked(&err) {
+        return "更新包文件被占用，请稍后重试".into();
+    }
+    match err.kind() {
+        ErrorKind::StorageFull => "磁盘空间不足，无法保存更新包".into(),
+        ErrorKind::PermissionDenied => "没有写入权限，无法保存更新包".into(),
+        _ => format!("保存更新包失败：{err}"),
+    }
+}
+
+/// 安装失败的常见原因：写入临时安装程序失败，或 ShellExecute 启动安装程序失败
+fn install_error(err: Error) -> String {
+    let Error::Io(err) = err else {
+        return match err {
+            Error::InvalidUpdaterFormat | Error::BinaryNotFoundInArchive => {
+                "安装包格式无效，请重新下载".into()
+            }
+            err => format!("安装更新失败：{err}"),
+        };
+    };
+    if is_locked(&err) {
+        return "安装程序文件被占用，请稍后重试".into();
+    }
+    match err.kind() {
+        ErrorKind::StorageFull => "磁盘空间不足，无法写入安装程序".into(),
+        ErrorKind::PermissionDenied => "没有权限写入或启动安装程序，可能被安全软件拦截".into(),
+        ErrorKind::NotFound => "找不到安装程序，可能被安全软件删除，请重新下载".into(),
+        _ => format!("安装更新失败：{err}"),
+    }
 }
 
 /// 启动时清理：删除已安装（版本不高于当前版本）或无法识别的更新包；
@@ -242,7 +281,10 @@ pub async fn update_download<R: Runtime>(
     tauri::async_runtime::spawn_blocking(move || save(&dir, &saved, &bytes))
         .await
         .map_err(|err| format!("保存更新包异常结束：{err}"))?
-        .map_err(|err| format!("保存更新包失败：{err}"))?;
+        .map_err(|err| {
+            log::warn!("保存更新包失败：{err}");
+            save_error(err)
+        })?;
     *DOWNLOADED.lock().unwrap() = Some(update);
     Ok(())
 }
@@ -274,8 +316,39 @@ pub async fn update_install<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
     };
     // Windows 上插件启动安装程序后直接 process::exit，不会触发 RunEvent::Exit，需先删除未提交保存的临时文件
     app.state::<files::Writes>().clear();
-    update
-        .install(bytes)
-        .map_err(|err| format!("安装更新失败：{err}"))?;
+    update.install(bytes).map_err(|err| {
+        log::warn!("安装更新失败：{err}");
+        install_error(err)
+    })?;
     app.restart()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_errors_explain_fixable_causes() {
+        assert_eq!(save_error(ErrorKind::StorageFull.into()), "磁盘空间不足，无法保存更新包");
+        assert_eq!(save_error(ErrorKind::PermissionDenied.into()), "没有写入权限，无法保存更新包");
+        assert!(save_error(io::Error::other("x")).starts_with("保存更新包失败："));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn save_and_install_errors_detect_locked_files() {
+        assert_eq!(save_error(io::Error::from_raw_os_error(32)), "更新包文件被占用，请稍后重试");
+        assert_eq!(save_error(io::Error::from_raw_os_error(33)), "更新包文件被占用，请稍后重试");
+        assert_eq!(install_error(Error::Io(io::Error::from_raw_os_error(32))), "安装程序文件被占用，请稍后重试");
+        // ERROR_ACCESS_DENIED / ERROR_FILE_NOT_FOUND 经 ErrorKind 映射
+        assert_eq!(install_error(Error::Io(io::Error::from_raw_os_error(5))), "没有权限写入或启动安装程序，可能被安全软件拦截");
+        assert_eq!(install_error(Error::Io(io::Error::from_raw_os_error(2))), "找不到安装程序，可能被安全软件删除，请重新下载");
+    }
+
+    #[test]
+    fn install_errors_explain_fixable_causes() {
+        assert_eq!(install_error(Error::Io(ErrorKind::StorageFull.into())), "磁盘空间不足，无法写入安装程序");
+        assert_eq!(install_error(Error::InvalidUpdaterFormat), "安装包格式无效，请重新下载");
+        assert!(install_error(Error::TempDirNotFound).starts_with("安装更新失败："));
+    }
 }

@@ -37,7 +37,7 @@ function renderMessage(message: string) {
 
 function getActionButtonClass(tone: 'primary' | 'secondary' | 'danger' | 'warning' = 'primary') {
   if (tone === 'secondary') {
-    return 'border border-transparent text-gray-600 hover:bg-black/[0.07] dark:bg-white/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.1]'
+    return 'border border-transparent bg-black/[0.04] text-gray-600 hover:bg-black/[0.07] dark:bg-white/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.1]'
   }
   if (tone === 'warning') return 'bg-orange-500 text-white hover:bg-orange-600'
   if (tone === 'danger') return 'bg-red-500 text-white hover:bg-red-600'
@@ -114,9 +114,10 @@ export default function ConfirmDialog() {
           )}
           {confirmDialog.title}
         </h3>
-        <p className={`text-sm text-gray-500 dark:text-gray-400 ${confirmDialog.content ? 'mb-3' : confirmDialog.checkbox ? 'mb-4' : 'mb-6'} leading-relaxed whitespace-pre-line ${confirmDialog.messageAlign === 'center' ? 'text-center' : ''}`}>
-          {renderMessage(confirmDialog.message)}
-        </p>
+        {/* 空行分段；text-pretty 避免末行只剩一两个字 */}
+        <div className={`space-y-2 text-sm text-gray-500 dark:text-gray-400 ${confirmDialog.content ? 'mb-3' : confirmDialog.checkbox ? 'mb-4' : 'mb-6'} leading-relaxed whitespace-pre-line text-pretty ${confirmDialog.messageAlign === 'center' ? 'text-center' : ''}`}>
+          {confirmDialog.message.split(/\n{2,}/).map((para, idx) => <p key={idx}>{renderMessage(para)}</p>)}
+        </div>
         {confirmDialog.content && (
           // 内容过长时只滚动这一区域，标题和按钮始终可见
           <div className={`custom-scrollbar -mx-2 max-h-[min(60vh,32rem)] min-h-0 overflow-y-auto overscroll-contain px-2 ${confirmDialog.checkbox ? 'mb-4' : 'mb-6'}`}>
@@ -156,7 +157,7 @@ export default function ConfirmDialog() {
               <button
                 onClick={handleCancel}
                 disabled={isSubmitting}
-                className="flex-1 py-2 rounded-xl border border-transparent dark:bg-white/[0.06] text-sm text-gray-600 dark:text-gray-400 hover:bg-black/[0.07] dark:hover:bg-white/[0.1] transition disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex-1 py-2 rounded-xl border border-transparent bg-black/[0.04] dark:bg-white/[0.06] text-sm text-gray-600 dark:text-gray-400 hover:bg-black/[0.07] dark:hover:bg-white/[0.1] transition disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {cancelText}
               </button>

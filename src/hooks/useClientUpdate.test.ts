@@ -28,8 +28,8 @@ describe('client update install', () => {
     calls.length = 0
     installUpdate.mockClear()
     downloadUpdate.mockClear()
-    useClientUpdate.setState({ status: 'ready', readyVersion: '1.2.0', error: '' })
-    useStore.setState({ tasks: [], agentConversations: [], batchProgress: null, confirmDialog: null })
+    useClientUpdate.setState({ status: 'ready', readyVersion: '1.2.0' })
+    useStore.setState({ tasks: [], agentConversations: [], batchProgress: null, confirmDialog: null, toast: null })
   })
 
   it('安装前先写入尚未保存的设置', async () => {
@@ -72,16 +72,25 @@ describe('client update install', () => {
     useStore.setState({ tasks: [runningTask] })
     requestClientUpdateInstall('1.3.0')
     const dialog = useStore.getState().confirmDialog
-    expect(dialog?.message).toContain('已下载的是 v1.2.0')
-    expect(dialog?.message).toContain('中断')
+    expect(dialog?.message.split('\n\n')).toEqual(['最新版本为 v1.3.0，已下载的是 v1.2.0。', '当前有任务或数据操作正在进行。', '安装更新会关闭客户端，并中断这些操作。'])
     expect(dialog?.buttons?.find((b) => b.label === '继续安装')?.tone).toBe('warning')
   })
 
-  it('下载失败后按磁盘上的实际情况显示安装包状态', async () => {
+  it('下载失败后用错误提示显示原因，并按磁盘上的实际情况显示安装包状态', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     downloadUpdate.mockRejectedValueOnce(new Error('网络错误'))
     getReadyUpdate.mockResolvedValueOnce('1.2.0')
     await startClientUpdateDownload('1.3.0')
-    expect(useClientUpdate.getState()).toMatchObject({ status: 'ready', readyVersion: '1.2.0', error: '网络错误' })
+    expect(useClientUpdate.getState()).toMatchObject({ status: 'ready', readyVersion: '1.2.0' })
+    expect(useStore.getState().toast).toMatchObject({ message: '网络错误', type: 'error' })
+  })
+
+  it('安装失败后用错误提示显示原因，按钮恢复为可重试', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installUpdate.mockRejectedValueOnce(new Error('安装程序文件被占用，请稍后重试'))
+    getReadyUpdate.mockResolvedValueOnce('1.2.0')
+    await startClientUpdateInstall()
+    expect(useClientUpdate.getState().status).toBe('ready')
+    expect(useStore.getState().toast).toMatchObject({ message: '安装程序文件被占用，请稍后重试', type: 'error' })
   })
 })

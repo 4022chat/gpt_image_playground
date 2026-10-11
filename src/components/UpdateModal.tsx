@@ -25,17 +25,7 @@ const CLIENT_UPDATE_LABELS = {
   installing: '安装中…',
 }
 
-// 下载进度更新频繁，按钮和错误提示单独订阅 store，避免整个弹窗随之重渲染
-function ClientUpdateError() {
-  const error = useClientUpdate((s) => s.error)
-  if (!error) return null
-  return (
-    <span title={error} className="min-w-0 max-w-[16rem] truncate text-xs text-red-500 dark:text-red-400">
-      {error}
-    </span>
-  )
-}
-
+// 下载进度更新频繁，按钮单独订阅 store，避免整个弹窗随之重渲染
 function ClientUpdateButton({ version }: { version: string }) {
   const status = useClientUpdate((s) => s.status)
   const progress = useClientUpdate((s) => s.progress)
@@ -252,11 +242,10 @@ function UpdateModalContent() {
             </button>
           )}
           <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
-            {showClientUpdate && <ClientUpdateError />}
             <button
               type="button"
               onClick={close}
-              className="whitespace-nowrap rounded-xl border border-transparent px-3 py-2 text-sm text-gray-600 sm:px-4 transition hover:bg-black/[0.07] dark:bg-white/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.1]"
+              className="whitespace-nowrap rounded-xl border border-transparent bg-black/[0.04] px-3 py-2 text-sm text-gray-600 sm:px-4 transition hover:bg-black/[0.07] dark:bg-white/[0.06] dark:text-gray-400 dark:hover:bg-white/[0.1]"
             >
               关闭
             </button>
