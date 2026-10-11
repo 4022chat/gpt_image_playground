@@ -66,26 +66,62 @@ pub struct Head {
     url: String,
 }
 
-/// reqwest 的 Display 不含底层原因，拼上整条 source 链，并取出其中的 IO 错误类型
-fn describe(err: &reqwest::Error) -> (String, Option<ErrorKind>) {
-    let mut detail = err.to_string();
-    let mut kind = None;
+/// 错误链中可用于判断和排查的信息
+struct Detail {
+    /// 整条 source 链拼成的文本，只用于识别原因，不显示给用户
+    chain: String,
+    kind: Option<ErrorKind>,
+    code: Option<i32>,
+    /// 错误链最内层的说明
+    inner: String,
+}
+
+/// reqwest 的 Display 不含底层原因，拼上整条 source 链，并取出其中的 IO 错误类型和系统错误码。
+/// reqwest 的 Display 会带上完整请求地址，其中可能有 ?key= 等密钥，这里去掉，避免出现在报错和日志中
+fn describe(err: &reqwest::Error) -> Detail {
+    let top = match err.url() {
+        Some(url) => err.to_string().replace(&format!(" for url ({url})"), ""),
+        None => err.to_string(),
+    };
+    let mut detail = Detail {
+        chain: top.clone(),
+        kind: None,
+        code: None,
+        inner: top,
+    };
     let mut source = std::error::Error::source(err);
     while let Some(e) = source {
-        detail.push_str(": ");
-        detail.push_str(&e.to_string());
+        detail.inner = e.to_string();
+        detail.chain.push_str(": ");
+        detail.chain.push_str(&detail.inner);
         if let Some(io) = e.downcast_ref::<std::io::Error>() {
-            kind = kind.or(Some(io.kind()));
+            detail.kind = detail.kind.or(Some(io.kind()));
+            detail.code = detail.code.or(io.raw_os_error());
         }
         source = e.source();
     }
-    (detail, kind)
+    detail
 }
 
-/// proxied 为 true 表示这次请求经过自定义代理；跟随系统时不知道是否经过代理，只能从 reqwest 的隧道错误判断
+impl Detail {
+    /// 附在原因后便于排查：有系统错误码时只附错误码（中文 Windows 的系统说明翻译不佳，不显示），
+    /// 没有时按需附最内层的英文说明
+    fn note(&self, with_inner: bool) -> String {
+        match self.code {
+            Some(code) => format!("（错误码 {code}）"),
+            None if with_inner => format!("（{}）", self.inner),
+            None => String::new(),
+        }
+    }
+}
+
+/// proxied 为 true 表示这次请求经过自定义代理；跟随系统时不知道是否经过代理，只能从 reqwest 的隧道错误判断。
+/// 只有兜底原因附上最内层说明，前端也据此只对兜底原因追加“请求立即失败”的通用提示
 fn send_error(err: &reqwest::Error, proxied: bool) -> String {
-    let (detail, kind) = describe(err);
-    let lower = detail.to_lowercase();
+    let detail = describe(err);
+    log::warn!("请求失败：{}", detail.chain);
+    let kind = detail.kind;
+    let lower = detail.chain.to_lowercase();
     let tls = ["certificate", "tls", "handshake", "corrupt message"].iter().any(|s| lower.contains(s));
     let reason = if lower.contains("proxy authorization required") {
         "代理服务器要求身份验证，请检查代理地址中的用户名和密码"
@@ -102,6 +138,7 @@ fn send_error(err: &reqwest::Error, proxied: bool) -> String {
     } else if kind == Some(ErrorKind::ConnectionRefused) {
         "连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动"
     } else if matches!(kind, Some(ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted)) {
+        // 此文案与下一条、兜底文案被 store.ts 的 getApiRequestNetworkErrorHint 按开头匹配，修改需同步
         "连接被服务器重置"
     } else if lower.contains("connection closed before message completed") {
         "服务器未返回响应就关闭了连接"
@@ -110,9 +147,10 @@ fn send_error(err: &reqwest::Error, proxied: bool) -> String {
     } else if err.is_redirect() {
         "重定向次数过多"
     } else {
-        "无法连接到服务器"
+        // 前端按开头匹配此文案，只对它追加“请求立即失败”提示，修改需同步 store.ts
+        return format!("无法连接到服务器。{}", detail.note(true));
     };
-    format!("{reason}（{detail}）")
+    format!("{reason}。{}", detail.note(false))
 }
 
 /// 开始等待取消信号；取消先于请求到达时直接返回已取消
@@ -254,7 +292,7 @@ pub async fn http_read(id: String, state: State<'_, Requests>) -> Result<Respons
             }
             Err(err) => {
                 map.remove(&id);
-                return Err(format!("读取响应时连接中断（{}）", describe(&err).0));
+                return Err(format!("读取响应时连接中断。{}", describe(&err).note(true)));
             }
         }
     }
@@ -297,5 +335,59 @@ mod tests {
         // 跟随系统时不知道是否经过代理，也能从隧道错误认出代理连接失败
         let msg = send_error(&err, false);
         assert!(msg.starts_with("无法连接代理服务器"), "{msg}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn strips_url_from_error_detail() {
+        use std::io::{Read, Write};
+        // reqwest 的 Display 带完整请求地址；状态码错误没有 source，最内层说明就是它本身
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 1024]);
+            stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n").unwrap();
+        });
+        let url = format!("http://127.0.0.1:{port}/v1?key=secret");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let err = client.get(&url).send().await.unwrap().error_for_status().unwrap_err();
+        assert!(err.to_string().contains("secret"));
+        let detail = describe(&err);
+        assert!(std::error::Error::source(&err).is_none());
+        assert_eq!(detail.note(true), "（HTTP status client error (404 Not Found)）");
+        assert!(!detail.chain.contains("secret"), "{}", detail.chain);
+
+        // 有 source 的连接错误：报错和用于日志的错误链都不含地址
+        let msg = send_direct("https://gip-test.invalid/v1?key=secret".into()).await;
+        assert!(!msg.contains("secret"), "{msg}");
+        let err = client.get("https://gip-test.invalid/v1?key=secret").send().await.unwrap_err();
+        assert!(!describe(&err).chain.contains("secret"));
+    }
+
+    async fn send_direct(url: String) -> String {
+        let meta = Meta {
+            id: "1".into(),
+            method: "GET".into(),
+            url,
+            headers: Vec::new(),
+        };
+        let (req, proxied) = build(&meta, Vec::new(), &Route::Direct).unwrap();
+        send_error(&req.send().await.unwrap_err(), proxied)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reports_refused_connection_with_os_code_only() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let msg = send_direct(format!("http://127.0.0.1:{port}/")).await;
+        // 只附系统错误码，不附错误链和系统说明
+        let code = if cfg!(windows) { 10061 } else { 111 };
+        assert_eq!(msg, format!("连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动。（错误码 {code}）"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reports_dns_error_without_chain() {
+        let msg = send_direct("https://gip-test.invalid/".into()).await;
+        assert!(msg.starts_with("无法解析域名，请检查 API 地址是否正确。"), "{msg}");
+        assert!(!msg.contains("dns error") && !msg.contains("os error"), "{msg}");
     }
 }

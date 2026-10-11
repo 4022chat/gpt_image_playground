@@ -10,6 +10,7 @@ import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentConvers
 import { cleanStaleAgentInputDrafts } from './lib/inputDraftState'
 import { normalizePersistedState } from './lib/persistedState'
 import { setPresetConfig } from './lib/presetConfig'
+import { FetchConnectError } from './lib/platform'
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
   const images = new Map<string, StoredImage>()
@@ -5804,5 +5805,82 @@ describe('task failure notification', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(showBrowserNotification).not.toHaveBeenCalled()
+  })
+})
+
+describe('client connection errors', () => {
+  beforeEach(async () => {
+    await clearTasks()
+    vi.mocked(callImageApi).mockReset()
+    const profile = createDefaultOpenAIProfile({ id: 'client-profile', apiKey: 'test-key', apiMode: 'images' })
+    useStore.setState({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [profile], activeProfileId: profile.id }),
+      appMode: 'gallery',
+      prompt: 'prompt',
+      inputImages: [],
+      maskDraft: null,
+      params: { ...DEFAULT_PARAMS },
+      tasks: [],
+      showToast: vi.fn(),
+    })
+  })
+
+  it('shows an identified reason without the immediate failure hint', async () => {
+    vi.mocked(callImageApi).mockRejectedValueOnce(new FetchConnectError('无法解析域名，请检查 API 地址是否正确。（错误码 11001）'))
+
+    await submitTask()
+    await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('error'))
+
+    expect(useStore.getState().tasks[0].error).toBe('无法解析域名，请检查 API 地址是否正确。（错误码 11001）')
+  })
+
+  it('keeps the immediate failure hint for the fallback reason', async () => {
+    vi.mocked(callImageApi).mockRejectedValueOnce(new FetchConnectError('无法连接到服务器。（unexpected eof）'))
+
+    await submitTask()
+    await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('error'))
+
+    const error = useStore.getState().tasks[0].error!
+    expect(error.startsWith('无法连接到服务器。（unexpected eof）\n提示：请求立即失败，可能原因：')).toBe(true)
+    expect(error).not.toContain('Failed to fetch')
+  })
+
+  it('treats a connection error as recoverable for queued fal requests', async () => {
+    const falProfile = createDefaultFalProfile({ id: 'fal-profile', apiKey: 'fal-key' })
+    useStore.setState({ settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [falProfile], activeProfileId: falProfile.id }) })
+    vi.mocked(callImageApi).mockImplementationOnce(async (opts) => {
+      opts.onFalRequestEnqueued?.({ requestId: 'fal-request', endpoint: 'fal-endpoint' })
+      // 消息不含“连接”“断开”等字样，只能靠错误类型判断为可恢复
+      throw new FetchConnectError('无法解析域名，请检查 API 地址是否正确。（错误码 11001）')
+    })
+
+    await submitTask()
+    await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('error'))
+
+    expect(useStore.getState().tasks[0]).toMatchObject({ falRecoverable: true, error: '与 fal.ai 的连接已断开，之后会继续查询任务结果。' })
+    await removeTask(useStore.getState().tasks[0])
+  })
+
+  it.each([
+    ['连接被服务器重置。（错误码 10054）', true],
+    ['无法解析域名，请检查 API 地址是否正确。（错误码 11001）', false],
+  ])('adds the gateway timeout hint after about 60 seconds only when the connection was dropped: %s', async (reason, hinted) => {
+    const now = Date.now()
+    const dateNow = vi.spyOn(Date, 'now')
+    vi.mocked(callImageApi).mockImplementationOnce(async () => {
+      dateNow.mockReturnValue(now + 60_000)
+      throw new FetchConnectError(reason)
+    })
+
+    try {
+      await submitTask()
+      await vi.waitFor(() => expect(useStore.getState().tasks[0]?.status).toBe('error'))
+    } finally {
+      dateNow.mockRestore()
+    }
+
+    const error = useStore.getState().tasks[0].error!
+    if (hinted) expect(error.startsWith(`${reason}\n提示：请求等待约 60 秒后被断开`)).toBe(true)
+    else expect(error).toBe(reason)
   })
 })

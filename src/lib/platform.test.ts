@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { apiFetch } from './platform'
+import { apiFetch, FetchConnectError } from './platform'
 
 const invoke = vi.hoisted(() => vi.fn())
 // 替换 FinalizationRegistry，用来检查登记、注销，并模拟回收
@@ -102,23 +102,25 @@ describe('apiFetch（客户端）', () => {
     expect(invoke.mock.calls.some((call) => call[0] === 'http_cancel')).toBe(true)
   })
 
-  it('连接阶段的错误转换为以 Failed to fetch 开头的 TypeError，并保留中文原因', async () => {
-    invoke.mockRejectedValue('连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动（tcp connect error）')
+  it('连接阶段的错误转换为 FetchConnectError，消息只保留中文原因', async () => {
+    invoke.mockRejectedValue('连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动。（错误码 10061）')
 
     const err = await apiFetch('http://127.0.0.1:1/v1').catch((e) => e)
 
+    expect(err).toBeInstanceOf(FetchConnectError)
     expect(err).toBeInstanceOf(TypeError)
-    expect(err.message).toBe('Failed to fetch: 连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动（tcp connect error）')
+    expect(err.message).toBe('连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动。（错误码 10061）')
   })
 
-  it('读取响应体时断流转换为 TypeError，但不以 Failed to fetch 开头', async () => {
-    fakeBackend({}, [encode('data: 1\n\n'), new Error('读取响应时连接中断（error decoding response body）')])
+  it('读取响应体时断流转换为普通 TypeError，不是 FetchConnectError', async () => {
+    fakeBackend({}, [encode('data: 1\n\n'), new Error('读取响应时连接中断。（错误码 10054）')])
 
     const res = await apiFetch('https://api.example.com/v1')
     const err = await res.text().catch((e) => e)
 
     expect(err).toBeInstanceOf(TypeError)
-    expect(err.message).toBe('读取响应时连接中断（error decoding response body）')
+    expect(err).not.toBeInstanceOf(FetchConnectError)
+    expect(err.message).toBe('读取响应时连接中断。（错误码 10054）')
   })
 
   it('json()、blob() 直接读取响应体流：保留取消原因和 Content-Type', async () => {

@@ -10,6 +10,9 @@ interface HttpHead {
   url: string
 }
 
+/** 客户端连接阶段（收到响应头之前）的错误，消息是 Rust 侧给出的中文原因；与浏览器 fetch 一样是 TypeError，但不带“Failed to fetch”前缀，网络错误判断需另外识别它 */
+export class FetchConnectError extends TypeError {}
+
 const abortReason = (signal: AbortSignal) => signal.reason ?? new DOMException('请求已停止', 'AbortError')
 
 const cancelRequest = (id: string) => void invoke('http_cancel', { id }).catch((err) => console.warn('取消请求失败：', err))
@@ -20,7 +23,7 @@ const abandonedBodies = isTauri ? new FinalizationRegistry<string>(cancelRequest
 /**
  * 请求用户配置的 API 或远程图片；客户端中 http/https 请求由 Rust 侧（src-tauri/src/http.rs）发出，不受 CORS 限制。
  * 错误与浏览器 fetch 语义一致：取消时抛 signal.reason（AbortError），其余抛 TypeError，
- * 其中连接阶段的错误以“Failed to fetch”开头，读取响应体时的断流不是，不会被当作“请求立即失败”
+ * 其中连接阶段的错误为 FetchConnectError，读取响应体时的断流是普通 TypeError，不会被当作“请求立即失败”
  */
 export async function apiFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   // data:、blob: 和相对地址继续走原生 fetch；每次调用时读取 globalThis.fetch，测试会替换它
@@ -44,7 +47,7 @@ export async function apiFetch(input: string | URL, init: RequestInit = {}): Pro
   // 请求体以二进制传给 Rust，避免大图编辑请求经 JSON 数组放大数倍
   const head = await invoke<HttpHead>('http_send', body, { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }).catch((err) => {
     settle()
-    throw signal?.aborted ? abortReason(signal) : new TypeError(`Failed to fetch: ${err}`)
+    throw signal?.aborted ? abortReason(signal) : new FetchConnectError(String(err))
   })
 
   // 这些状态码不允许带响应体，Response 构造时传入响应体会报错

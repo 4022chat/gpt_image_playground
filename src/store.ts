@@ -74,7 +74,7 @@ import { ALL_FAVORITES_COLLECTION_ID, DEFAULT_FAVORITE_COLLECTION_ID, createDefa
 import { createPersistedState, mergePersistedAgentConversations, migratePersistedState, normalizePersistedState } from './lib/persistedState'
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
-import { apiFetch, isTauri } from './lib/platform'
+import { apiFetch, FetchConnectError, isTauri } from './lib/platform'
 import { pickSaveDir, saveFile, saveFileToDir, type SaveOptions } from './lib/saveFile'
 import { endDataProgress, setDataProgressCancelable, startDataProgress, updateDataProgress } from './lib/dataProgress'
 import { throwIfAborted } from './lib/serverSentEvents'
@@ -1296,11 +1296,13 @@ function getTaskApiProfileName(task: TaskRecord) {
 
 function isNetworkRecoverableError(err: unknown) {
   if (typeof DOMException !== 'undefined' && err instanceof DOMException && err.name === 'AbortError') return true
+  if (err instanceof FetchConnectError) return true
   const message = err instanceof Error ? err.message : String(err)
   return /abort|network|failed to fetch|fetch failed|load failed|timeout|连接|断开|中断/i.test(message)
 }
 
 function isApiRequestNetworkError(err: unknown): boolean {
+  if (err instanceof FetchConnectError) return true
   if (err instanceof TypeError) {
     const message = err.message.toLowerCase()
     return /failed to fetch|fetch failed|load failed|networkerror|network request failed/i.test(message)
@@ -1321,6 +1323,12 @@ function getApiRequestNetworkErrorHint(
   if (!isApiRequestNetworkError(err)) return null
 
   const elapsedSeconds = Math.max(0, (Date.now() - createdAt) / 1000)
+
+  // 客户端的连接错误已由 Rust 侧给出具体原因，只有兜底的“无法连接到服务器”仍追加通用提示；
+  // 超时、域名解析等发生在建立连接时，与网关超时无关，只有连接被重置或未响应就关闭才可能是等待较久后被网关断开
+  if (err instanceof FetchConnectError && !err.message.startsWith('无法连接到服务器')) {
+    if (elapsedSeconds <= 15 || !/^(连接被服务器重置|服务器未返回响应就关闭了连接)/.test(err.message)) return null
+  }
 
   if (elapsedSeconds <= 15) {
     // 客户端忽略已保存的代理设置
