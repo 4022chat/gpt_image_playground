@@ -169,6 +169,8 @@ Windows 用户可以直接安装桌面客户端；网页版可以部署到 Verce
 
 完整写法见 [预置配置](#preset-config)，其余变量见 [环境变量](#env-vars)。
 
+仓库中的 GitHub Actions 工作流分别负责客户端、Vercel、GitHub Pages 和 Docker 镜像，不需要的可在 **Actions** 中选中对应工作流后停用（**Disable workflow**）。
+
 <a id="desktop-client"></a>
 <details>
 <summary><strong>🖥️ 方式一：Windows 桌面客户端</strong></summary>
@@ -196,6 +198,7 @@ npm run tauri:build
 - 客户端专用变量 `VITE_WEB_APP_URL`：复制导入链接时使用的网页版地址，未设置时改用 `gpt-image-playground://` 链接。
 - `tauri:build` 需设置 `TAURI_SIGNING_PRIVATE_KEY`（私钥内容或路径）和 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，用于给更新包签名。
 - 自行分发时，用 `npx tauri signer generate` 生成自己的密钥，并替换 `src-tauri/tauri.conf.json` 中的 `plugins.updater.pubkey` 和更新地址。
+- 推送 `v*` tag 时，若仓库 Secrets 配置了 `TAURI_SIGNING_PRIVATE_KEY`（及其密码），会先构建客户端并上传到 Release，成功后再部署网页版和 Docker 镜像；未配置则跳过客户端，直接部署。
 
 </details>
 

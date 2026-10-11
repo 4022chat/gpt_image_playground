@@ -13,7 +13,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # job 级 if 不能引用 secrets，先由轻量 job 判断是否配置了签名私钥；未配置时跳过构建，网页版与 Docker 镜像在推送 tag 时直接部署
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$SIGNING_KEY" ]]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is not set. Skipping desktop client build."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
   windows:
+    needs: check
+    if: ${{ needs.check.outputs.enabled == 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
