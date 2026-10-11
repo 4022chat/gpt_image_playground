@@ -17,20 +17,21 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-log = "2"
-tauri-plugin-http = { version = "2", default-features = false, features = ["rustls-tls", "http2", "charset", "system-proxy", "unsafe-headers"] }
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-window-state = "2"
 log = "0.4"
+# 与 tauri-plugin-http 2.8 使用的版本和 TLS 实现一致（rustls + 内置根证书），并跟随系统代理
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "system-proxy"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 percent-encoding = "2"
 sha2 = "0.10"
 tempfile = "3"
-# 版本与 tauri 内部使用的 tokio 一致，只用于 block_in_place
-tokio = { version = "1", features = ["rt-multi-thread"] }
+# 版本与 tauri 内部使用的 tokio 一致，用于 block_in_place 和 HTTP 请求的取消
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 tauri-plugin-updater = "2"
 semver = "1"
 

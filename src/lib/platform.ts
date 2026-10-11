@@ -1,47 +1,102 @@
-import { isTauri as detectTauri } from '@tauri-apps/api/core'
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
+import { invoke, isTauri as detectTauri } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 export const isTauri = detectTauri()
 
-/** 插件抛出的是字符串或普通 Error，统一成浏览器 fetch 的错误：取消时抛 signal.reason（AbortError），其余抛 TypeError */
-function toFetchError(err: unknown, signal?: AbortSignal | null) {
-  if (signal?.aborted) return signal.reason ?? new DOMException('请求已停止', 'AbortError')
-  return new TypeError(`Failed to fetch: ${err instanceof Error ? err.message : String(err)}`)
+interface HttpHead {
+  status: number
+  statusText: string
+  headers: [string, string][]
+  url: string
 }
 
-/** 请求用户配置的 API 或远程图片；客户端中 http/https 请求由 Rust 侧发出，不受 CORS 限制 */
+const abortReason = (signal: AbortSignal) => signal.reason ?? new DOMException('请求已停止', 'AbortError')
+
+const cancelRequest = (id: string) => void invoke('http_cancel', { id }).catch((err) => console.warn('取消请求失败：', err))
+
+// 响应体既没读完也没取消就被丢弃时（如只看状态码就返回），回收时通知 Rust 断开连接。网页版不需要，也避免旧浏览器缺少该 API 时加载即报错
+const abandonedBodies = isTauri ? new FinalizationRegistry<string>(cancelRequest) : null
+
+/**
+ * 请求用户配置的 API 或远程图片；客户端中 http/https 请求由 Rust 侧（src-tauri/src/http.rs）发出，不受 CORS 限制。
+ * 错误与浏览器 fetch 语义一致：取消时抛 signal.reason（AbortError），其余抛 TypeError，
+ * 其中连接阶段的错误以“Failed to fetch”开头，读取响应体时的断流不是，不会被当作“请求立即失败”
+ */
 export async function apiFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   // data:、blob: 和相对地址继续走原生 fetch；每次调用时读取 globalThis.fetch，测试会替换它
   if (!isTauri || !/^https?:\/\//i.test(String(input))) return globalThis.fetch(input, init)
 
   const signal = init.signal
-  const headers = new Headers(init.headers)
-  // 插件默认附带 Origin: http://tauri.localhost，部分中转会因此拒绝请求；开启 unsafe-headers 后空值会在 Rust 侧被移除
-  if (!headers.has('Origin')) headers.set('Origin', '')
+  // 借 Request 把字符串、FormData、Blob 等请求体统一成字节，FormData 的 multipart 边界也会写进 Content-Type
+  const req = new Request(input, { ...init, signal: null })
+  const body = new Uint8Array(await req.arrayBuffer())
+  if (signal?.aborted) throw abortReason(signal)
+  const id = crypto.randomUUID()
+  const cancel = () => cancelRequest(id)
+  const token = {}
+  const settle = () => {
+    signal?.removeEventListener('abort', cancel)
+    abandonedBodies?.unregister(token)
+  }
+  signal?.addEventListener('abort', cancel, { once: true })
 
-  const res = await tauriFetch(input, { ...init, headers }).catch((err) => {
-    throw toFetchError(err, signal)
+  const meta = { id, method: req.method, url: req.url, headers: [...req.headers] }
+  // 请求体以二进制传给 Rust，避免大图编辑请求经 JSON 数组放大数倍
+  const head = await invoke<HttpHead>('http_send', body, { headers: { 'x-meta': encodeURIComponent(JSON.stringify(meta)) } }).catch((err) => {
+    settle()
+    throw signal?.aborted ? abortReason(signal) : new TypeError(`Failed to fetch: ${err}`)
   })
-  if (!res.body) return res
 
-  // 读取响应体时的取消和断流同样转换成浏览器的错误类型
-  const reader = res.body.getReader()
-  const body = new ReadableStream<Uint8Array>({
-    pull: async (ctrl) => {
-      try {
-        const chunk = await reader.read()
-        if (chunk.done) return ctrl.close()
-        ctrl.enqueue(chunk.value)
-      } catch (err) {
-        ctrl.error(toFetchError(err, signal))
-      }
+  // 这些状态码不允许带响应体，Response 构造时传入响应体会报错
+  const nullBody = [204, 205, 304].includes(head.status)
+  if (nullBody) {
+    settle()
+    cancel()
+  }
+  const pull = async (ctrl: ReadableStreamDefaultController<Uint8Array>) => {
+    try {
+      const chunk = new Uint8Array(await invoke<ArrayBuffer>('http_read', { id }))
+      if (chunk.byteLength) return ctrl.enqueue(chunk)
+      settle()
+      ctrl.close()
+    } catch (err) {
+      settle()
+      ctrl.error(signal?.aborted ? abortReason(signal) : new TypeError(String(err)))
+    }
+  }
+  const stream = nullBody ? null : new ReadableStream<Uint8Array>({
+    pull,
+    cancel: () => {
+      settle()
+      cancel()
     },
-    cancel: (reason) => reader.cancel(reason),
+    // 不预读：有人读取时才发起 http_read，否则挂起中的读取会让流一直存活，无法被回收
+  }, { highWaterMark: 0 })
+  // 登记 pull 函数而不是流：流是 Web API 包装对象，apiFetch 返回后只经 C++ 内部可达（Response、reader 持有的是内部对象），
+  // V8 的 minor GC 会丢弃这种未修改过的包装对象并触发回调，正在读取的请求会被误取消。
+  // pull 是普通 JS 函数，只要流还活着就被它引用，流真正被丢弃后才会回收。Node 单测覆盖不到这一点，只能在 WebView2 中验证
+  if (stream) abandonedBodies?.register(pull, id, token)
+  const res = new Response(stream, { status: head.status, statusText: head.statusText, headers: head.headers })
+  // WebView2 中 Response 的 text()、json() 等会把响应体流的错误一律换成 TypeError('Failed to fetch')，
+  // 取消原因和断流原因都会丢失，因此改为直接读取流
+  const readBody = async () => {
+    if (!res.body) return new Blob()
+    const chunks: BlobPart[] = []
+    const reader = res.body.getReader()
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) return new Blob(chunks, { type: res.headers.get('Content-Type') ?? '' })
+      chunks.push(chunk.value)
+    }
+  }
+  Object.defineProperties(res, {
+    url: { value: head.url },
+    blob: { value: readBody },
+    arrayBuffer: { value: async () => (await readBody()).arrayBuffer() },
+    text: { value: async () => (await readBody()).text() },
+    json: { value: async () => JSON.parse(await (await readBody()).text()) },
   })
-  const wrapped = new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers })
-  Object.defineProperty(wrapped, 'url', { value: res.url })
-  return wrapped
+  return res
 }
 
 /** 仅把指向其他站点的 http/https 地址和 mailto: 视为外部链接，blob:、data: 和应用自身页面不处理 */

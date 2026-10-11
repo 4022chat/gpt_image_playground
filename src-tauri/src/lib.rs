@@ -1,5 +1,6 @@
 mod diagnostics;
 mod files;
+mod http;
 mod storage;
 mod update;
 
@@ -25,7 +26,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_http::init())
         // 插件的初始化脚本会替换 window.Notification，前端沿用 Web Notification 的调用即可发出系统通知
         .plugin(tauri_plugin_notification::init())
         // 只供 Rust 侧的更新命令使用，不向前端开放插件命令
@@ -61,12 +61,22 @@ pub fn run() {
             files::download_dir_pick,
             files::download_dir_use,
             files::download_dir_open,
+            http::http_send,
+            http::http_read,
+            http::http_cancel,
             update::update_ready,
             update::update_download,
             update::update_install,
             update::update_discard,
         ])
         .manage(files::SaveDirs::default())
+        .manage(http::Requests::default())
+        // 页面重载（含开发时的热重载）后旧页面的请求已无人读取，立即断开
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                webview.state::<http::Requests>().clear();
+            }
+        })
         .setup(|app| {
             // 安装版由 NSIS 注册协议。开发版只在设置了 GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK 时才注册，
             // 注册会把 HKCU 下的协议改为指向当前开发版程序，覆盖安装版的注册；

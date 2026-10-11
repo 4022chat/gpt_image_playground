@@ -2,15 +2,51 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { apiFetch } from './platform'
 
-const tauriFetch = vi.hoisted(() => vi.fn())
+const invoke = vi.hoisted(() => vi.fn())
+// 替换 FinalizationRegistry，用来检查登记、注销，并模拟回收
+const registry = vi.hoisted(() => {
+  const state = { cleanup: (_id: string) => undefined as unknown, live: new Map<object, string>() }
+  globalThis.FinalizationRegistry = class {
+    // 其他库也会创建实例，只记下 apiFetch 登记过的那个
+    constructor(private cleanup: (id: string) => unknown) {}
+    register(_target: object, id: string, token: object) {
+      state.cleanup = this.cleanup
+      state.live.set(token, id)
+    }
+    unregister(token: object) { return state.live.delete(token) }
+  } as unknown as typeof FinalizationRegistry
+  return state
+})
 
-vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true }))
-vi.mock('@tauri-apps/plugin-http', () => ({ fetch: tauriFetch }))
+vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke }))
+
+const encode = (text: string) => new TextEncoder().encode(text).buffer
+
+/** 按 Rust 侧的行为模拟 http_send / http_read / http_cancel：chunks 用完时读到结尾；取消后读取立即失败，挂起中的读取也随之失败 */
+function fakeBackend(head: Record<string, unknown>, chunks: Array<ArrayBuffer | 'hang' | Error>) {
+  let canceled = false
+  let cancelPending: ((reason: string) => void) | null = null
+  invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'http_send') return { status: 200, statusText: 'OK', headers: [], url: 'https://api.example.com/v1', ...head }
+    if (cmd === 'http_cancel') {
+      canceled = true
+      cancelPending?.('请求已取消')
+      return
+    }
+    if (canceled) throw '请求已取消'
+    const next = chunks.shift() ?? new ArrayBuffer(0)
+    if (next instanceof Error) throw next.message
+    if (next !== 'hang') return next
+    return new Promise((_, reject) => { cancelPending = reject })
+  })
+}
+
+const sendCall = () => invoke.mock.calls.find((call) => call[0] === 'http_send')!
 
 describe('apiFetch（客户端）', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
-    tauriFetch.mockReset()
+    invoke.mockReset()
   })
 
   it('data: 和 blob: 地址走调用时的全局 fetch', async () => {
@@ -21,61 +57,148 @@ describe('apiFetch（客户端）', () => {
     await apiFetch('blob:http://tauri.localhost/abc')
 
     expect(nativeFetch).toHaveBeenCalledTimes(2)
-    expect(tauriFetch).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
   })
 
-  it('http/https 地址走插件，并清空 Origin', async () => {
-    tauriFetch.mockResolvedValue(new Response('{"a":1}', { status: 201, headers: { 'Content-Type': 'application/json' } }))
+  it('http/https 地址交给 Rust：请求体以二进制传入，参数经 x-meta 传入，响应体逐块读出', async () => {
+    fakeBackend({ status: 201, statusText: 'Created', headers: [['content-type', 'application/json']], url: 'https://cdn.example.com/final' }, [encode('{"a":'), encode('1}')])
 
-    const res = await apiFetch('https://api.example.com/v1/responses', { method: 'POST', headers: { Authorization: 'Bearer k' } })
+    const res = await apiFetch('https://api.example.com/v1/responses', { method: 'POST', headers: new Headers({ Authorization: 'Bearer k' }), body: '{"x":1}' })
 
-    const init = tauriFetch.mock.calls[0][1] as RequestInit
-    const headers = init.headers as Headers
-    expect(headers.get('Origin')).toBe('')
-    expect(headers.get('Authorization')).toBe('Bearer k')
+    const [, body, opts] = sendCall()
+    expect(new TextDecoder().decode(body as Uint8Array)).toBe('{"x":1}')
+    const meta = JSON.parse(decodeURIComponent(opts.headers['x-meta']))
+    expect(meta).toMatchObject({ method: 'POST', url: 'https://api.example.com/v1/responses' })
+    expect(meta.headers).toContainEqual(['authorization', 'Bearer k'])
+    expect(meta.headers.some(([name]: [string]) => name === 'origin')).toBe(false)
     expect(res.status).toBe(201)
     expect(res.headers.get('Content-Type')).toBe('application/json')
+    expect(res.url).toBe('https://cdn.example.com/final')
     expect(await res.json()).toEqual({ a: 1 })
+    expect(invoke.mock.calls.filter((call) => call[0] === 'http_read')).toHaveLength(3)
   })
 
-  it('保留 res.url，传入 Headers 实例时与 Origin 正确合并', async () => {
-    const pluginRes = new Response('ok')
-    Object.defineProperty(pluginRes, 'url', { value: 'https://cdn.example.com/final.png' })
-    tauriFetch.mockResolvedValue(pluginRes)
+  it('FormData 请求体带上 multipart 边界', async () => {
+    fakeBackend({}, [])
+    const form = new FormData()
+    form.append('prompt', '猫')
 
-    const res = await apiFetch('https://api.example.com/a.png', { headers: new Headers({ 'X-Key': 'k' }) })
+    await apiFetch('https://api.example.com/v1/images/edits', { method: 'POST', body: form })
 
-    const headers = (tauriFetch.mock.calls[0][1] as RequestInit).headers as Headers
-    expect(headers.get('X-Key')).toBe('k')
-    expect(headers.get('Origin')).toBe('')
-    expect(res.url).toBe('https://cdn.example.com/final.png')
+    const [, body, opts] = sendCall()
+    const meta = JSON.parse(decodeURIComponent(opts.headers['x-meta']))
+    const contentType = meta.headers.find(([name]: [string]) => name === 'content-type')[1] as string
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=/)
+    expect(new TextDecoder().decode(body as Uint8Array)).toContain('猫')
   })
 
-  it('网络失败转换为 TypeError', async () => {
-    tauriFetch.mockRejectedValue('error sending request')
+  it('204 等状态不带响应体，并释放 Rust 侧的请求', async () => {
+    fakeBackend({ status: 204, statusText: 'No Content' }, [])
 
-    await expect(apiFetch('http://127.0.0.1:1/v1')).rejects.toThrow(TypeError)
+    const res = await apiFetch('https://api.example.com/v1/x', { method: 'DELETE' })
+
+    expect(res.status).toBe(204)
+    expect(res.body).toBeNull()
+    expect(invoke.mock.calls.some((call) => call[0] === 'http_cancel')).toBe(true)
   })
 
-  it('取消时抛出 AbortError，包括读取响应体期间', async () => {
+  it('连接阶段的错误转换为以 Failed to fetch 开头的 TypeError，并保留中文原因', async () => {
+    invoke.mockRejectedValue('连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动（tcp connect error）')
+
+    const err = await apiFetch('http://127.0.0.1:1/v1').catch((e) => e)
+
+    expect(err).toBeInstanceOf(TypeError)
+    expect(err.message).toBe('Failed to fetch: 连接被拒绝，请检查 API 地址和端口是否正确、服务是否已启动（tcp connect error）')
+  })
+
+  it('读取响应体时断流转换为 TypeError，但不以 Failed to fetch 开头', async () => {
+    fakeBackend({}, [encode('data: 1\n\n'), new Error('读取响应时连接中断（error decoding response body）')])
+
+    const res = await apiFetch('https://api.example.com/v1')
+    const err = await res.text().catch((e) => e)
+
+    expect(err).toBeInstanceOf(TypeError)
+    expect(err.message).toBe('读取响应时连接中断（error decoding response body）')
+  })
+
+  it('json()、blob() 直接读取响应体流：保留取消原因和 Content-Type', async () => {
+    fakeBackend({ headers: [['content-type', 'image/png']] }, [encode('ab'), 'hang'])
+    const controller = new AbortController()
+
+    const res = await apiFetch('https://api.example.com/a.png', { signal: controller.signal })
+    const pending = res.json()
+    await vi.waitFor(() => expect(invoke.mock.calls.filter((call) => call[0] === 'http_read')).toHaveLength(2))
+    controller.abort(new DOMException('请求超时', 'AbortError'))
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError', message: '请求超时' })
+
+    fakeBackend({ headers: [['content-type', 'image/png']] }, [encode('ab'), encode('c')])
+    const blob = await (await apiFetch('https://api.example.com/a.png')).blob()
+    expect(blob.type).toBe('image/png')
+    expect(await blob.text()).toBe('abc')
+  })
+
+  it('响应体读完后注销回收登记；未读就被回收时通知 Rust 取消', async () => {
+    // 前面的用例有未读的响应体，登记仍在
+    registry.live.clear()
+    fakeBackend({}, [encode('ok')])
+    expect(await (await apiFetch('https://api.example.com')).text()).toBe('ok')
+    expect(registry.live.size).toBe(0)
+
+    fakeBackend({ status: 503 }, [encode('busy')])
+    await apiFetch('https://api.example.com')
+    expect(registry.live.size).toBe(1)
+    const [id] = registry.live.values()
+    registry.live.clear()
+    registry.cleanup(id)
+    expect(invoke).toHaveBeenCalledWith('http_cancel', { id })
+  })
+
+  it('已取消的信号不发出请求', async () => {
     const controller = new AbortController()
     controller.abort()
-    tauriFetch.mockRejectedValue(new Error('Request cancelled'))
-    await expect(apiFetch('https://api.example.com', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
 
-    const streamController = new AbortController()
-    const body = new ReadableStream<Uint8Array>({
-      start: (ctrl) => {
-        ctrl.enqueue(new TextEncoder().encode('data: 1\n\n'))
-        streamController.signal.addEventListener('abort', () => ctrl.error('Request cancelled'))
-      },
-    })
-    tauriFetch.mockResolvedValue(new Response(body))
-    const res = await apiFetch('https://api.example.com', { signal: streamController.signal })
+    await expect(apiFetch('https://api.example.com', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('读取响应体期间取消：通知 Rust 断开连接，并抛出 signal.reason', async () => {
+    fakeBackend({}, [encode('data: 1\n\n'), 'hang'])
+    const controller = new AbortController()
+
+    const res = await apiFetch('https://api.example.com', { signal: controller.signal })
     const reader = res.body!.getReader()
     expect(new TextDecoder().decode((await reader.read()).value)).toBe('data: 1\n\n')
     const pending = reader.read()
-    streamController.abort()
+    // 等第二次 http_read 挂起后再取消，对应流式停顿时点击停止或超时
+    await vi.waitFor(() => expect(invoke.mock.calls.filter((call) => call[0] === 'http_read')).toHaveLength(2))
+    controller.abort(new DOMException('请求超时', 'AbortError'))
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError', message: '请求超时' })
+    const id = JSON.parse(decodeURIComponent(sendCall()[2].headers['x-meta'])).id
+    expect(invoke).toHaveBeenCalledWith('http_cancel', { id })
+  })
+
+  it('请求阶段取消时抛出 signal.reason，读完后不再响应取消', async () => {
+    let rejectSend: (reason: string) => void = () => undefined
+    invoke.mockImplementation((cmd: string) => cmd === 'http_send'
+      ? new Promise((_, reject) => { rejectSend = reject })
+      : Promise.resolve())
+    const controller = new AbortController()
+
+    const pending = apiFetch('https://api.example.com', { signal: controller.signal })
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('http_send', expect.anything(), expect.anything()))
+    controller.abort()
+    rejectSend('请求已取消')
+
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(invoke.mock.calls.filter((call) => call[0] === 'http_cancel')).toHaveLength(1)
+
+    invoke.mockReset()
+    fakeBackend({}, [encode('ok')])
+    const done = new AbortController()
+    const res = await apiFetch('https://api.example.com', { signal: done.signal })
+    expect(await res.text()).toBe('ok')
+    done.abort()
+    expect(invoke.mock.calls.some((call) => call[0] === 'http_cancel')).toBe(false)
   })
 })

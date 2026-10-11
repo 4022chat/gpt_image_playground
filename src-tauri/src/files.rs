@@ -23,7 +23,7 @@ pub struct SaveDir {
     path: String,
 }
 
-fn header<'a>(request: &'a Request<'_>, name: &str) -> &'a str {
+pub(crate) fn header<'a>(request: &'a Request<'_>, name: &str) -> &'a str {
     request
         .headers()
         .get(name)

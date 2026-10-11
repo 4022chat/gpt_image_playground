@@ -132,6 +132,11 @@ export function maybeAppendImageToolDroppedHint(message: string): string {
   return `${message}\n${IMAGE_TOOL_DROPPED_HINT}`
 }
 
+/** 请求超时中止时使用的原因，替代浏览器默认的英文“signal is aborted without reason”；仍为 AbortError，不改变错误分类 */
+export function createRequestTimeoutError(timeoutSeconds: number) {
+  return new DOMException(`请求超时：超过 ${timeoutSeconds} 秒仍未完成，请稍后重试或提高超时时间。`, 'AbortError')
+}
+
 /** 排除明确与流式无关的状态码后追加提示 */
 export function maybeAppendStreamingHint(message: string, status: number, streamImages?: boolean): string {
   const transparentMessage = maybeAppendTransparentBackgroundHint(message)

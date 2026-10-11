@@ -4,7 +4,6 @@ import type { TaskRecord } from '../types'
 const invoke = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke }))
-vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }))
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: vi.fn() }))
 
 import { getAllTasks, getImage, getStoredImageThumbnail, hashDataUrl, putImage, putImageThumbnail, storeImageWithSize } from './db'

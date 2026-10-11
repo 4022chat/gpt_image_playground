@@ -5,6 +5,7 @@ import {
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
   appendStreamingFormatHint,
+  createRequestTimeoutError,
   maybeAppendStreamingHint,
   type CallApiOptions,
   type CallApiResult,
@@ -497,7 +498,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
   const paths = createOpenAICompatiblePaths()
 
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  const timeoutId = setTimeout(() => controller.abort(createRequestTimeoutError(profile.timeout)), profile.timeout * 1000)
 
   try {
     let response: Response
@@ -620,10 +621,10 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile): P
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {
-      return parseImagesApiStreamResponse(response, mime, opts.onPartialImage, controller.signal)
+      return await parseImagesApiStreamResponse(response, mime, opts.onPartialImage, controller.signal)
     }
 
-    return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
+    return await parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
   } finally {
     clearTimeout(timeoutId)
   }
@@ -871,7 +872,11 @@ async function pollCustomTaskResult(
       })
 
       if (!taskResponse.ok) {
-        if (isRetryablePollingStatus(taskResponse.status)) continue
+        if (isRetryablePollingStatus(taskResponse.status)) {
+          // 不读的响应体要主动取消，否则客户端中连接会保留到服务端发完为止
+          void taskResponse.body?.cancel().catch(() => undefined)
+          continue
+        }
         throw new Error(await getApiErrorMessage(taskResponse))
       }
 
@@ -914,7 +919,7 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
   const isEdit = inputImageDataUrls.length > 0
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const controller = new AbortController()
-  let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  let timeoutId: ReturnType<typeof setTimeout> | null = setTimeout(() => controller.abort(createRequestTimeoutError(profile.timeout)), profile.timeout * 1000)
 
   try {
     const proxyConfig = readClientDevProxyConfig()
@@ -934,7 +939,7 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
       ;(err as any).rawResponsePayload = JSON.stringify(submitPayload, null, 2)
       throw err
     }
-    if (!taskId) return extractCustomImages(submitPayload, submitMapping.result ?? {}, mime, controller.signal)
+    if (!taskId) return await extractCustomImages(submitPayload, submitMapping.result ?? {}, mime, controller.signal)
     if (!customProvider.poll) throw new Error('异步接口返回了 task_id，但服务商配置缺少 poll')
     opts.onCustomTaskEnqueued?.({ taskId })
     if (timeoutId) {
@@ -1017,7 +1022,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
   const requestHeaders = createRequestHeaders(profile)
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
+  const timeoutId = setTimeout(() => controller.abort(createRequestTimeoutError(profile.timeout)), profile.timeout * 1000)
 
   try {
     if (opts.maskDataUrl) {
@@ -1057,7 +1062,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {
-      return parseResponsesApiStreamResponse(response, mime, opts.onPartialImage)
+      return await parseResponsesApiStreamResponse(response, mime, opts.onPartialImage)
     }
 
     const payload = await response.json() as ResponsesApiResponse
