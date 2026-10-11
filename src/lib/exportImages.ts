@@ -10,7 +10,7 @@ import { isTauri } from './platform'
 const SIMPLE_IMAGE_MIME = /^image\/(\w+)$/
 
 /** 估算每张图片在备份中的大小：客户端只查询文件大小；网页版需读出原图和缩略图（缺失的缩略图会顺带补全） */
-export async function getExportImageSizes(imageIds: string[]): Promise<ExportImageSize[]> {
+export async function getExportImageSizes(imageIds: string[], onProgress?: (done: number) => void): Promise<ExportImageSize[]> {
   if (isTauri) {
     const ids = new Set(imageIds)
     return (await getImageStats())
@@ -22,7 +22,8 @@ export async function getExportImageSizes(imageIds: string[]): Promise<ExportIma
   }
 
   const sizes: ExportImageSize[] = []
-  for (const id of imageIds) {
+  for (const [idx, id] of imageIds.entries()) {
+    onProgress?.(idx)
     const image = await getImage(id)
     if (!image) continue
     const thumbnail = await getImageThumbnail(id)
@@ -33,9 +34,10 @@ export async function getExportImageSizes(imageIds: string[]): Promise<ExportIma
 
 /**
  * 读取一批要导出的原图和缩略图，按传入顺序排列（ZIP 内容依赖顺序）。客户端直接取文件二进制、8 张一批并发读取；
- * 网页版逐张读取。缩略图缺失或过期时与网页版一样经 getImageThumbnail 重新生成，生成需解码原图，逐张执行
+ * 网页版逐张读取。缩略图缺失或过期时与网页版一样经 getImageThumbnail 重新生成，生成需解码原图，逐张执行。
+ * onProgress 在每批读完后收到已读取的张数
  */
-export async function readExportImages(ids: string[]) {
+export async function readExportImages(ids: string[], onProgress?: (done: number) => void) {
   const images: Array<StoredImage | ExportImageFile> = []
   const thumbnailsByImageId = new Map<string, StoredImageThumbnail | ExportThumbnailFile>()
   const batchSize = isTauri ? 8 : 1
@@ -58,6 +60,7 @@ export async function readExportImages(ids: string[]) {
         thumbnailVersion: thumbnail.thumbnailVersion,
       })
     }
+    onProgress?.(Math.min(start + batchSize, ids.length))
   }
   return { images, thumbnailsByImageId }
 }

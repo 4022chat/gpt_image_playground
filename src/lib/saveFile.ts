@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { isTauri } from './platform'
+import { throwIfAborted } from './serverSentEvents'
+
+/** 写入大文件时的取消信号与进度回调（已写入字节数、总字节数），仅客户端分块写入时生效 */
+export interface SaveOptions {
+  signal?: AbortSignal
+  onProgress?: (written: number, total: number) => void
+}
 
 /** 客户端中用户选定的保存目录；token 对应 Rust 侧记下的目录，前端无法借此写入其他位置 */
 export interface SaveDir {
@@ -37,17 +44,21 @@ const CHUNK_SIZE = 8 * 1024 * 1024
 
 /**
  * 把内容分块写入 Rust 侧在目标目录中打开的临时文件，全部写完后提交（改名为目标文件），返回实际写入的完整路径。
- * 任一步失败时丢弃临时文件，不留下写了一半的文件
+ * 任一步失败或取消时丢弃临时文件，不留下写了一半的文件
  */
-async function writeInChunks(id: number, data: Blob | Uint8Array) {
+async function writeInChunks(id: number, data: Blob | Uint8Array, opts?: SaveOptions) {
   try {
     const size = data instanceof Blob ? data.size : data.byteLength
     for (let offset = 0; offset < size; offset += CHUNK_SIZE) {
+      throwIfAborted(opts?.signal)
       const chunk = data instanceof Blob
         ? new Uint8Array(await data.slice(offset, offset + CHUNK_SIZE).arrayBuffer())
         : data.subarray(offset, offset + CHUNK_SIZE)
       await invoke('save_write', chunk, { headers: { 'x-id': String(id) } })
+      opts?.onProgress?.(Math.min(offset + CHUNK_SIZE, size), size)
     }
+    // 取消后不再提交，由下方丢弃临时文件
+    throwIfAborted(opts?.signal)
     return await invoke<string>('save_commit', { id })
   } catch (err) {
     await invoke('save_abort', { id }).catch((abortErr) => console.warn('丢弃临时文件失败', abortErr))
@@ -60,16 +71,16 @@ async function writeInChunks(id: number, data: Blob | Uint8Array) {
  * 或在“默认地址”模式下直接写入默认保存地址（同名自动加序号）。
  * 返回保存位置（网页版为文件名），用户取消时返回 null
  */
-export async function saveFile(data: Blob | Uint8Array, fileName: string): Promise<string | null> {
+export async function saveFile(data: Blob | Uint8Array, fileName: string, opts?: SaveOptions): Promise<string | null> {
   if (!isTauri) {
     triggerDownload(data instanceof Blob ? data : new Blob([data as BlobPart]), fileName)
     return fileName
   }
   if (beforeSave && !(await beforeSave())) return null
-  if (saveToDefaultDir) return await saveFileToDir(await invoke<SaveDir>('download_dir_use'), data, fileName)
+  if (saveToDefaultDir) return await saveFileToDir(await invoke<SaveDir>('download_dir_use'), data, fileName, opts)
   const id = await invoke<number | null>('save_file', { name: fileName })
   if (id === null) return null
-  return await writeInChunks(id, data)
+  return await writeInChunks(id, data, opts)
 }
 
 /**
@@ -82,8 +93,8 @@ export async function pickSaveDir() {
 }
 
 /** 仅客户端：写入 pickSaveDir 选定的目录，已有同名文件时自动加序号，返回实际写入的完整路径 */
-export async function saveFileToDir(dir: SaveDir, data: Blob | Uint8Array, fileName: string) {
-  return await writeInChunks(await invoke<number>('save_dir_begin', { token: dir.token, name: fileName }), data)
+export async function saveFileToDir(dir: SaveDir, data: Blob | Uint8Array, fileName: string, opts?: SaveOptions) {
+  return await writeInChunks(await invoke<number>('save_dir_begin', { token: dir.token, name: fileName }), data, opts)
 }
 
 /** 仅客户端：默认保存地址，用于在设置中显示 */

@@ -335,6 +335,15 @@ input[type="number"] {
   animation: confirm-in 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* 进度条：总量未知时来回滑动 */
+@keyframes progress-indeterminate {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(250%); }
+}
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+
 /* 移动端折叠区域收起/展开 */
 .collapse-section {
   display: grid;

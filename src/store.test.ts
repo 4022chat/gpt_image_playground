@@ -5,6 +5,7 @@ import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_
 import type { AgentConversation, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 import { hasActiveDataOperations, hasInterruptibleOperations, trackDataTransfer } from './lib/dataOperations'
+import { cancelDataProgress, useDataProgress } from './lib/dataProgress'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentConversationTaskIds, getAgentRoundTaskIds, remapAgentRoundMentionsForPathChange } from './lib/agentConversationState'
 import { cleanStaleAgentInputDrafts } from './lib/inputDraftState'
 import { normalizePersistedState } from './lib/persistedState'
@@ -2629,6 +2630,22 @@ describe('data import', () => {
       favoriteCollectionIds: [importedCollections[1].id],
       isFavorite: true,
     })
+  })
+
+  it('cancels import during parsing without writing any data', async () => {
+    await clearTasks()
+    const importing = importData(importFile({
+      version: 3,
+      exportedAt: new Date(0).toISOString(),
+      tasks: [task({ id: 'imported-canceled-task' })],
+      imageFiles: {},
+    }), { importConfig: false, importTasks: true })
+    cancelDataProgress()
+
+    expect(await importing).toBe(false)
+    expect(await getAllTasks()).toEqual([])
+    expect(useStore.getState().showToast).toHaveBeenCalledWith('已取消导入，未写入任何数据', 'info')
+    expect(useDataProgress.getState().progress).toBeNull()
   })
 
   it('drops invalid retry start times when importing tasks', async () => {

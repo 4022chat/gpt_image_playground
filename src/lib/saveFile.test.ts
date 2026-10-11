@@ -84,4 +84,36 @@ describe('saveFile（客户端）', () => {
     expect(invoke.mock.calls.map((c) => c[0])).toEqual(['download_dir_use', 'save_dir_begin', 'save_write', 'save_commit'])
     expect(await pickSaveDir()).toEqual({ token: 2, path: 'D:\\out' })
   })
+
+  it('报告写入进度，取消后不再写入并丢弃临时文件', async () => {
+    const controller = new AbortController()
+    const progress: number[] = []
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'save_dir_begin') return 4
+      return null
+    })
+    const data = new Uint8Array(20 * MB)
+    const saving = saveFileToDir({ token: 1, path: 'D:\\out' }, data, 'a.zip', {
+      signal: controller.signal,
+      onProgress: (written, total) => {
+        progress.push(written)
+        expect(total).toBe(20 * MB)
+        if (written === 8 * MB) controller.abort()
+      },
+    })
+    await expect(saving).rejects.toThrow()
+    expect(progress).toEqual([8 * MB])
+    expect(invoke.mock.calls.map((c) => c[0])).toEqual(['save_dir_begin', 'save_write', 'save_abort'])
+  })
+
+  it('最后一块写完后取消也不提交', async () => {
+    const controller = new AbortController()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'save_dir_begin' ? 6 : null))
+    const saving = saveFileToDir({ token: 1, path: 'D:\\out' }, new Uint8Array(3), 'a.zip', {
+      signal: controller.signal,
+      onProgress: () => controller.abort(),
+    })
+    await expect(saving).rejects.toThrow()
+    expect(invoke.mock.calls.map((c) => c[0])).toEqual(['save_dir_begin', 'save_write', 'save_abort'])
+  })
 })

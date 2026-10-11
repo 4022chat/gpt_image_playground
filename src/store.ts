@@ -74,7 +74,9 @@ import { createPersistedState, mergePersistedAgentConversations, migratePersiste
 import { addImageSizeParam, createTaskDonePatch, createTaskErrorPatch, deriveAgentImageActualParams, deriveGalleryActualParams, firstActualParams, hasActualParams, hasActualSizeParam, mapActualParamsByImage, mapRevisedPromptsByImage, markInterruptedOpenAIRunningTasks } from './lib/taskState'
 import { stripInjectedCodexCliSizePrompt } from './lib/size'
 import { apiFetch, isTauri } from './lib/platform'
-import { pickSaveDir, saveFile, saveFileToDir } from './lib/saveFile'
+import { pickSaveDir, saveFile, saveFileToDir, type SaveOptions } from './lib/saveFile'
+import { endDataProgress, setDataProgressCancelable, startDataProgress, updateDataProgress } from './lib/dataProgress'
+import { throwIfAborted } from './lib/serverSentEvents'
 import { tauriStorage } from './lib/tauriStorage'
 
 const FAL_RECOVERY_POLL_MS = 10_000
@@ -4509,6 +4511,9 @@ export interface ExportOptions {
 
 /** 导出数据为 ZIP */
 export async function exportData(options: ExportOptions = { exportConfig: true, exportTasks: true }) {
+  // 导出全程可取消：网页版放弃后续下载，客户端丢弃正在写入的临时文件
+  const signal = startDataProgress('export', true)
+  let savedParts = 0
   try {
     const state = useStore.getState()
     if (options.exportTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('当前有任务正在进行，请完成或停止后再导出。')
@@ -4526,18 +4531,34 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       defaultFavoriteCollectionId,
       agentConversations: options.exportTasks ? getPersistableAgentConversations(agentConversations) : [],
     }
-    const imageSizes = await getExportImageSizes(imageIds)
+    // 进度回调中检查取消，逐张读取时也能及时中断
+    const imageSizes = await getExportImageSizes(imageIds, (done) => {
+      throwIfAborted(signal)
+      updateDataProgress('统计图片', done, imageIds.length, 'image')
+    })
+    throwIfAborted(signal)
     const plan = getExportZipPlan(params, imageSizes)
     const backupId = `${exportedAt}`
     // 客户端分卷备份时先选择目录，一次写入全部分卷，替代浏览器的多文件下载
+    if (isTauri && plan.length > 1) updateDataProgress('选择保存位置')
     const dir = isTauri && plan.length > 1 ? await pickSaveDir() : null
     if (isTauri && plan.length > 1 && !dir) return
     let savedPath = ''
+    const imageTotal = plan.reduce((sum, part) => sum + part.imageIds.length, 0)
+    let imagesRead = 0
 
     for (let index = 0; index < plan.length; index++) {
-      const { images, thumbnailsByImageId } = await readExportImages(plan[index].imageIds)
-
       const partNumber = index + 1
+      const partLabel = plan.length > 1 ? `（第 ${partNumber} / ${plan.length} 个分片）` : ''
+      throwIfAborted(signal)
+      const { images, thumbnailsByImageId } = await readExportImages(plan[index].imageIds, (done) => {
+        throwIfAborted(signal)
+        updateDataProgress(`读取图片${partLabel}`, imagesRead + done, imageTotal, 'image')
+      })
+      imagesRead += plan[index].imageIds.length
+      throwIfAborted(signal)
+      updateDataProgress(`打包${partLabel}`)
+
       const result = await buildExportZip({
         ...params,
         tasks: plan[index].tasks,
@@ -4549,13 +4570,18 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       })
       const suffix = plan.length > 1 ? `_${String(plan.length).padStart(2, '0')}parts_part${String(partNumber).padStart(2, '0')}` : ''
       const fileName = `gpt-image-playground-backup_${formatExportFileTime(new Date(exportedAt))}${suffix}.zip`
+      throwIfAborted(signal)
+      updateDataProgress(`保存文件${partLabel}`)
+      const saveOpts: SaveOptions = { signal, onProgress: (written, total) => updateDataProgress(`保存文件${partLabel}`, written, total, 'byte') }
       if (dir) {
-        await saveFileToDir(dir, result.bytes, fileName)
+        await saveFileToDir(dir, result.bytes, fileName, saveOpts)
+        savedParts++
         continue
       }
       // 客户端直接传字节给 Rust 写入，不再复制一份 Blob
-      const saved = await saveFile(isTauri ? result.bytes : createExportBlob(result.bytes), fileName)
+      const saved = await saveFile(isTauri ? result.bytes : createExportBlob(result.bytes), fileName, saveOpts)
       if (!saved) return
+      savedParts++
       savedPath = saved
       if (partNumber < plan.length) await new Promise((resolve) => setTimeout(resolve, 150))
     }
@@ -4564,9 +4590,15 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       : plan.length > 1 ? `已请求下载 ${plan.length} 个 ZIP，请确认浏览器已允许多文件下载` : isTauri ? `数据已导出到 ${savedPath}` : '数据已导出'
     useStore.getState().showToast(msg, 'success')
   } catch (e) {
+    if (signal.aborted) {
+      useStore.getState().showToast(savedParts ? `已取消导出，已${isTauri ? '保存' : '下载'}的 ${savedParts} 个分片不是完整备份，可以删除` : '已取消导出', 'info')
+      return
+    }
     console.error('exportData failed', e)
     const detail = e instanceof Error ? e.message.trim() : String(e).trim()
     useStore.getState().showToast(detail ? `导出失败，${detail}` : '导出失败，未知错误', 'error')
+  } finally {
+    endDataProgress()
   }
 }
 
@@ -4593,6 +4625,8 @@ export async function restoreExplicitPresetConfig(ids: { providerIds: string[], 
 
 /** 导入 ZIP 数据 */
 export async function importData(input: File | File[], options: ImportOptions = { importConfig: true, importTasks: true }): Promise<boolean> {
+  // 只允许在解析备份阶段取消；开始写入后取消会留下半份数据
+  const signal = startDataProgress('import', true)
   try {
     const state = useStore.getState()
     if (options.importTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('当前有任务正在进行，请完成或停止后再导入。')
@@ -4603,9 +4637,11 @@ export async function importData(input: File | File[], options: ImportOptions = 
     }
 
     const selected = [] as Array<{ file: File; manifest: Awaited<ReturnType<typeof readExportZipManifest>> }>
-    for (const file of files) {
+    for (const [idx, file] of files.entries()) {
+      updateDataProgress('解析备份', idx, files.length > 1 ? files.length : 0, files.length > 1 ? 'file' : undefined)
       const manifest = await readExportZipManifest(new Uint8Array(await file.arrayBuffer()), options.importTasks)
       selected.push({ file, manifest })
+      throwIfAborted(signal)
     }
     const multipart = selected.some((part) => part.manifest.backupPart != null)
     if (multipart) {
@@ -4629,11 +4665,21 @@ export async function importData(input: File | File[], options: ImportOptions = 
     const importedAgentConversations = selected.flatMap((part) => part.manifest.agentConversations ?? [])
     const hasTaskData = selected.some((part) => part.manifest.tasks != null || part.manifest.imageFiles != null)
 
+    // 先关闭取消再检查，确保点了取消就不会进入写入阶段
+    setDataProgressCancelable(false)
+    throwIfAborted(signal)
+
     const importedImageIds: string[] = []
     if (options.importTasks && hasTaskData) {
-      for (const part of selected) {
+      // 原图和缩略图合并计数，分片交替写入时进度条也只增不减
+      const fileTotal = selected.reduce((sum, part) => sum + Object.keys(part.manifest.imageFiles ?? {}).length + Object.keys(part.manifest.thumbnailFiles ?? {}).length, 0)
+      let filesDone = 0
+      for (const [idx, part] of selected.entries()) {
+        updateDataProgress(selected.length > 1 ? `读取备份（第 ${idx + 1} / ${selected.length} 个）` : '读取备份', filesDone, fileTotal, 'file')
         const { manifest, files: zipFiles } = await readExportZip(new Uint8Array(await part.file.arrayBuffer()))
         for (const [id, info] of Object.entries(manifest.imageFiles ?? {})) {
+          // 先计入当前文件，写到最后一个时进度到 100%
+          updateDataProgress('写入图片和缩略图', ++filesDone, fileTotal, 'file')
           const dataUrl = readExportZipFileAsDataUrl(zipFiles, info.path)
           if (!dataUrl) continue
           await putImage({
@@ -4649,6 +4695,7 @@ export async function importData(input: File | File[], options: ImportOptions = 
         }
 
         for (const [id, info] of Object.entries(manifest.thumbnailFiles ?? {})) {
+          updateDataProgress('写入图片和缩略图', ++filesDone, fileTotal, 'file')
           const thumbnailDataUrl = readExportZipFileAsDataUrl(zipFiles, info.path)
           if (!thumbnailDataUrl) continue
           await putImageThumbnail({
@@ -4667,6 +4714,7 @@ export async function importData(input: File | File[], options: ImportOptions = 
         }
       }
 
+      updateDataProgress('写入任务和会话')
       for (const task of importedTasks) {
         // startedAt 来自导入文件，非法值会让计时和“重试于”显示异常
         await putTask(Number.isFinite(task.startedAt) || task.startedAt === undefined ? task : { ...task, startedAt: undefined })
@@ -4741,10 +4789,16 @@ export async function importData(input: File | File[], options: ImportOptions = 
     useStore.getState().showToast(msg, 'success')
     return true
   } catch (e) {
+    if (signal.aborted) {
+      useStore.getState().showToast('已取消导入，未写入任何数据', 'info')
+      return false
+    }
     console.error('importData failed', e)
     const detail = e instanceof Error ? e.message.trim() : String(e).trim()
     useStore.getState().showToast(detail ? `导入失败，${detail}` : '导入失败，未知错误', 'error')
     return false
+  } finally {
+    endDataProgress()
   }
 }
 

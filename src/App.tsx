@@ -20,6 +20,7 @@ import Lightbox from './components/Lightbox'
 import SettingsModal from './components/SettingsModal'
 import UpdateModal from './components/UpdateModal'
 import ConfirmDialog from './components/ConfirmDialog'
+import DataProgressDialog from './components/DataProgressDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import SketchBoardModal from './components/SketchBoardModal'
@@ -210,6 +211,7 @@ export default function App() {
       <Lightbox />
       <SettingsModal />
       <UpdateModal />
+      <DataProgressDialog />
       <ConfirmDialog />
       <SupportPromptModal />
       {/* 等启动时的任务加载和预置配置导入完成，再按图片数量等条件筛选公告 */}
