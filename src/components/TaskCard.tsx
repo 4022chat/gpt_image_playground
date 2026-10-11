@@ -89,7 +89,7 @@ export default function TaskCard({
   const swipeDirectionRef = useRef<-1 | 0 | 1>(0)
   const swipeActionActiveRef = useRef(false)
   const cardRef = useRef<HTMLDivElement>(null)
-  // 画廊没有虚拟列表，只在卡片接近可视区域时才读取缩略图，避免启动时一次性读取全部
+  // 虚拟列表会多渲染上下各一屏；仍等卡片接近可视区域再读缩略图，快速拖动滚动条时一闪而过的卡片不必读取
   const nearViewport = useNearViewport(cardRef)
   const swipeOffsetRef = useRef(0)
   const pendingSwipeOffsetRef = useRef(0)
