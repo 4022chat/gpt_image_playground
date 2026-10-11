@@ -156,10 +156,17 @@ export function isAgentTask(task: TaskRecord) {
   return task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
 }
 
-function showTaskCompletionNotification(title: string, body: string) {
+// 失败通知用独立 tag，避免与成功通知互相覆盖
+function showTaskCompletionNotification(title: string, body: string, tag = 'task-completion') {
   const settings = normalizeSettings(useStore.getState().settings)
   if (!settings.taskCompletionNotification) return
-  showBrowserNotification(title, { body })
+  showBrowserNotification(title, { body, tag })
+}
+
+function showTaskFailureNotification(task: TaskRecord) {
+  // Agent 任务由所在回合统一通知，批量任务在整批结束时汇总失败数量
+  if (isAgentTask(task) || batchTaskIds.has(task.id)) return
+  showTaskCompletionNotification('图像生成失败', '请回到应用查看详情。', 'task-failure')
 }
 
 export function countSuccessfulOutputImages(tasks: TaskRecord[]) {
@@ -1152,6 +1159,7 @@ function failOpenAITaskIfStillRunning(taskId: string, error: string, now = Date.
     falRecoverable: false,
     elapsed: Math.max(0, now - (task.startedAt ?? task.createdAt)),
   })
+  showTaskFailureNotification(task)
   return true
 }
 
@@ -1483,11 +1491,13 @@ async function recoverFalTask(taskId: string) {
     }
 
     clearFalRecoveryTimer(taskId)
+    const error = getFalErrorMessage(err) ?? (err instanceof Error ? err.message : String(err))
     updateTaskInStore(taskId, {
-      ...createTaskErrorPatch(task, getFalErrorMessage(err) ?? (err instanceof Error ? err.message : String(err)), Date.now()),
+      ...createTaskErrorPatch(task, error, Date.now()),
       ...getRawErrorPayload(err),
       falRecoverable: false,
     })
+    showTaskFailureNotification(task)
     if (isAgentTask(task)) void continueRecoveredAgentRound(taskId)
   }
 }
@@ -2373,6 +2383,7 @@ async function continueRecoveredAgentRound(taskId: string) {
             : currentRound,
         ),
       }))
+      showTaskCompletionNotification('Agent 回复失败', '请回到应用查看详情。', 'task-failure')
     }
 
     const recovered = createReadyAgentRecoveredToolState(round, latestState.tasks)
@@ -3642,6 +3653,7 @@ async function executeAgentRound(
       }
     })
     useStore.getState().showToast(`Agent 请求失败：${message}`, 'error')
+    showTaskCompletionNotification('Agent 回复失败', '请回到应用查看详情。', 'task-failure')
   } finally {
     if (agentRoundControllers.get(controllerKey) === controller) {
       agentRoundControllers.delete(controllerKey)
@@ -3670,11 +3682,13 @@ async function executeTask(taskId: string) {
   taskExecutions.set(taskId, execution)
   const taskProfile = getTaskApiProfile(settings, task)
   if (!taskProfile && task.apiProfileId) {
+    const error = '找不到此任务所使用的 API 配置。'
     updateTaskInStore(taskId, {
-      ...createTaskErrorPatch(task, '找不到此任务所使用的 API 配置。', Date.now()),
+      ...createTaskErrorPatch(task, error, Date.now()),
       falRecoverable: false,
       customRecoverable: false,
     })
+    showTaskFailureNotification(task)
     taskExecutions.delete(taskId)
     return
   }
@@ -3872,6 +3886,7 @@ async function executeTask(taskId: string) {
       })
       // 批量任务不自动打开失败详情，避免连续弹窗打断
       if (!batchTaskIds.has(taskId)) useStore.getState().setDetailTaskId(taskId)
+      showTaskFailureNotification(task)
     }
   } finally {
     if (taskExecutions.get(taskId) === execution) taskExecutions.delete(taskId)
@@ -4497,11 +4512,13 @@ async function recoverCustomTask(taskId: string) {
   } catch (err) {
     clearCustomRecoveryTimer(taskId)
     if (!useStore.getState().tasks.some((item) => item.id === taskId)) return
+    const error = err instanceof Error ? err.message : String(err)
     updateTaskInStore(taskId, {
-      ...createTaskErrorPatch(task, err instanceof Error ? err.message : String(err), Date.now()),
+      ...createTaskErrorPatch(task, error, Date.now()),
       ...getRawErrorPayload(err),
       customRecoverable: false,
     })
+    showTaskFailureNotification(task)
     if (isAgentTask(task)) void continueRecoveredAgentRound(taskId)
   }
 }

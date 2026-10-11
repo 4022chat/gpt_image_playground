@@ -346,22 +346,22 @@ export default function GeneralSettingsTab({
         <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">通知</h4>
         <div className="block">
           <div className="mb-1 flex items-center justify-between">
-            <span className="block text-sm text-gray-600 dark:text-gray-300">任务完成后发送系统通知</span>
+            <span className="block text-sm text-gray-600 dark:text-gray-300">任务完成或失败时发送系统通知</span>
             <button
               type="button"
               onClick={() => { void toggleTaskCompletionNotification() }}
               className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${draft.taskCompletionNotification ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
               role="switch"
               aria-checked={draft.taskCompletionNotification}
-              aria-label="任务完成后发送系统通知"
+              aria-label="任务完成或失败时发送系统通知"
             >
               <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${draft.taskCompletionNotification ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
             </button>
           </div>
           <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
             {isTauri
-              ? '开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送系统通知。如果没有收到通知，请检查 Windows 设置中本应用的通知开关。'
-              : '开启后，画廊模式图像生成完成、Agent 模式回复结束时，会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。'}
+              ? '开启后，画廊模式图像生成和 Agent 模式回复结束时（无论成功或失败）都会发送系统通知。如果没有收到通知，请检查 Windows 设置中本应用的通知开关。'
+              : '开启后，画廊模式图像生成和 Agent 模式回复结束时（无论成功或失败）都会发送浏览器系统通知。浏览器可能会请求通知权限或默认拒绝，请查看相关提示。'}
           </div>
         </div>
       </section>
