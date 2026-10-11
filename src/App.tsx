@@ -22,6 +22,7 @@ import UpdateModal from './components/UpdateModal'
 import ConfirmDialog from './components/ConfirmDialog'
 import DataProgressDialog from './components/DataProgressDialog'
 import Toast from './components/Toast'
+import DbBlockedNotice from './components/DbBlockedNotice'
 import MaskEditorModal from './components/MaskEditorModal'
 import SketchBoardModal from './components/SketchBoardModal'
 import ImageContextMenu from './components/ImageContextMenu'
@@ -219,6 +220,7 @@ export default function App() {
       <FavoriteCollectionPickerModal />
       <ManageCollectionsModal />
       <Toast />
+      <DbBlockedNotice />
       <MaskEditorModal />
       <SketchBoardModal />
       <ImageContextMenu />

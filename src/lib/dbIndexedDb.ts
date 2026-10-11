@@ -1,50 +1,19 @@
 import type { AgentConversation, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import { dbTransaction, openDB, STORE_AGENT_CONVERSATIONS, STORE_IMAGES, STORE_TASKS, STORE_THUMBNAILS } from './idb'
+import { disableBlobStorage, fromImageRecord, fromThumbnailRecord, getStoredImageRecord, getStoredThumbnailRecord, toImageRecord, toThumbnailRecord, type StoredImageRecord } from './imageBlob'
 
-const DB_NAME = 'gpt-image-playground'
-const DB_VERSION = 3
-const STORE_TASKS = 'tasks'
-const STORE_IMAGES = 'images'
-const STORE_THUMBNAILS = 'thumbnails'
-const STORE_AGENT_CONVERSATIONS = 'agentConversations'
+// 浏览器拒绝保存 Blob 时（旧版 Safari 报 UnknownError，部分隐私模式报 DataCloneError）改存原始字符串，之后本次会话都存字符串；
+// 其他错误（空间不足、连接关闭等）与 Blob 无关，照常抛出
+const BLOB_REJECTED_ERRORS = new Set(['DataCloneError', 'UnknownError'])
 
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
-    req.onupgradeneeded = (e) => {
-      const db = (e.target as IDBOpenDBRequest).result
-      if (!db.objectStoreNames.contains(STORE_TASKS)) {
-        db.createObjectStore(STORE_TASKS, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_IMAGES)) {
-        db.createObjectStore(STORE_IMAGES, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_THUMBNAILS)) {
-        db.createObjectStore(STORE_THUMBNAILS, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_AGENT_CONVERSATIONS)) {
-        db.createObjectStore(STORE_AGENT_CONVERSATIONS, { keyPath: 'id' })
-      }
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
-  })
-}
-
-function dbTransaction<T>(
-  storeName: string,
-  mode: IDBTransactionMode,
-  fn: (store: IDBObjectStore) => IDBRequest<T>,
-): Promise<T> {
-  return openDB().then(
-    (db) =>
-      new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, mode)
-        const store = tx.objectStore(storeName)
-        const req = fn(store)
-        req.onsuccess = () => resolve(req.result)
-        req.onerror = () => reject(req.error)
-      }),
-  )
+async function putWithBlobFallback(storeName: string, original: object, record: object): Promise<IDBValidKey> {
+  try {
+    return await dbTransaction(storeName, 'readwrite', (s) => s.put(record))
+  } catch (err) {
+    if (record === original || !BLOB_REJECTED_ERRORS.has((err as Error | null)?.name ?? '')) throw err
+    disableBlobStorage(err)
+    return dbTransaction(storeName, 'readwrite', (s) => s.put(original))
+  }
 }
 
 // ===== Tasks =====
@@ -114,19 +83,29 @@ export function replaceAgentConversations(conversations: AgentConversation[]): P
 // ===== Images =====
 
 export function getImage(id: string): Promise<StoredImage | undefined> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.get(id))
+  return getStoredImageRecord(id).then(fromImageRecord)
+}
+
+/** 只取元数据（宽高等），不读出图片内容 */
+export async function getImageMeta(id: string): Promise<Omit<StoredImage, 'dataUrl'> | undefined> {
+  const rec = await getStoredImageRecord(id)
+  if (!rec) return undefined
+  const { blob, dataUrl, ...meta } = rec
+  return meta
 }
 
 export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
-  return dbTransaction(STORE_THUMBNAILS, 'readonly', (s) => s.get(id))
+  return getStoredThumbnailRecord(id).then(fromThumbnailRecord)
 }
 
 export function putImageThumbnail(thumbnail: StoredImageThumbnail): Promise<IDBValidKey> {
-  return dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(thumbnail))
+  return putWithBlobFallback(STORE_THUMBNAILS, thumbnail, toThumbnailRecord(thumbnail))
 }
 
-export function getAllImages(): Promise<StoredImage[]> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAll())
+export async function getAllImages(): Promise<StoredImage[]> {
+  const records = await dbTransaction<StoredImageRecord[]>(STORE_IMAGES, 'readonly', (s) => s.getAll())
+  const images = await Promise.all(records.map(fromImageRecord))
+  return images.filter((image): image is StoredImage => image != null)
 }
 
 export function getAllImageIds(): Promise<string[]> {
@@ -136,7 +115,7 @@ export function getAllImageIds(): Promise<string[]> {
 }
 
 export function putImage(image: StoredImage): Promise<IDBValidKey> {
-  return dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put(image))
+  return putWithBlobFallback(STORE_IMAGES, image, toImageRecord(image))
 }
 
 export function deleteImage(id: string): Promise<undefined> {

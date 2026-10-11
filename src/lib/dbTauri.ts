@@ -159,6 +159,19 @@ export async function getImage(id: string): Promise<StoredImage | undefined> {
   }
 }
 
+/** 只取元数据（宽高等），不把图片编码成 dataUrl */
+export async function getImageMeta(id: string): Promise<Omit<StoredImage, 'dataUrl'> | undefined> {
+  const file = await getImageFile(id)
+  if (!file) return undefined
+  return {
+    id,
+    createdAt: file.meta.createdAt ?? undefined,
+    source: file.meta.source ?? undefined,
+    width: file.meta.width ?? undefined,
+    height: file.meta.height ?? undefined,
+  }
+}
+
 export async function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
   const file = await getThumbnailFile(id)
   if (!file) return undefined

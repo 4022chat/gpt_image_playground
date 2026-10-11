@@ -1,13 +1,14 @@
 import {
   CURRENT_THUMBNAIL_VERSION,
   getImage,
+  getImageMeta,
   getImageThumbnail,
-  getStoredFreshImageThumbnail,
 } from './db'
 import { getImageStats, getThumbnailFile, payloadToDataUrl, RAW_DATA_URL_MIME } from './dbTauri'
+import { getFreshThumbnailIds, getThumbnailSource } from './imageBlob'
 import { isTauri } from './platform'
 
-/** src 在网页版是 dataUrl；客户端读盘得到的是 Blob URL，生成或导入时缓存的仍是 dataUrl */
+/** 从存储读出的 src 是 Blob URL（旧格式记录为 dataUrl），生成或导入时缓存的仍是 dataUrl */
 type ImageThumbnail = {
   src: string
   width?: number
@@ -128,7 +129,7 @@ export async function ensureImageThumbnailCached(id: string): Promise<ImageThumb
   const cached = getCachedThumbnail(id)
   if (cached) return cached
 
-  const thumbnail = isTauri ? await readTauriThumbnail(id) : await readStoredThumbnail(id)
+  const thumbnail = isTauri ? await readTauriThumbnail(id) : await getThumbnailSource(id, CURRENT_THUMBNAIL_VERSION)
   if (!thumbnail) {
     scheduleThumbnailBackfill([id], 'visible')
     return undefined
@@ -142,17 +143,6 @@ export async function ensureImageThumbnailCached(id: string): Promise<ImageThumb
   }
   cacheThumbnail(id, thumbnail)
   return thumbnail
-}
-
-async function readStoredThumbnail(id: string): Promise<ImageThumbnail | undefined> {
-  const rec = await getStoredFreshImageThumbnail(id)
-  if (!rec?.thumbnailDataUrl) return undefined
-  return {
-    src: rec.thumbnailDataUrl,
-    width: rec.width,
-    height: rec.height,
-    thumbnailVersion: rec.thumbnailVersion,
-  }
 }
 
 /** 客户端直接用文件二进制生成 Blob URL，省去 base64 编码和超长 dataUrl 字符串 */
@@ -206,16 +196,14 @@ export function scheduleThumbnailBackfill(ids: Iterable<string>, priority: 'visi
 }
 
 /**
- * 启动或导入后批量补全缩略图。补全任务会读取原图，客户端先按数据库记录筛出缺少当前版本缩略图的图片，
- * 避免在后台把全部原图读一遍；查询失败时退回全部补全。网页版没有不读原图的查询方式，保持原样
+ * 启动或导入后批量补全缩略图。补全任务会读取原图，因此先筛出缺少当前版本缩略图的图片（客户端查数据库记录，
+ * 网页版查缩略图版本索引），避免在后台把全部原图读一遍；查询失败时退回全部补全
  */
 export async function scheduleMissingThumbnailBackfill(ids: string[]) {
-  if (!isTauri) {
-    scheduleThumbnailBackfill(ids)
-    return
-  }
   try {
-    const fresh = new Set((await getImageStats()).filter((stat) => stat.thumbnailVersion === CURRENT_THUMBNAIL_VERSION).map((stat) => stat.id))
+    const fresh = new Set(isTauri
+      ? (await getImageStats()).filter((stat) => stat.thumbnailVersion === CURRENT_THUMBNAIL_VERSION).map((stat) => stat.id)
+      : await getFreshThumbnailIds(CURRENT_THUMBNAIL_VERSION))
     scheduleThumbnailBackfill(ids.filter((id) => !fresh.has(id)))
   } catch (err) {
     console.warn('查询图片信息失败，改为全部补全缩略图', err)
@@ -252,9 +240,11 @@ async function getNextThumbnailBackfillBatch() {
   const candidates = getOrderedThumbnailBackfillIds().slice(0, MAX_THUMBNAIL_BACKFILL_CONCURRENT)
   if (candidates.length === 0) return []
 
+  // 只需宽高：客户端查数据库记录（不读文件），网页版取记录元数据；查询失败时按尺寸未知处理（并发 1）
+  const stats = isTauri ? new Map((await getImageStats().catch(() => [])).map((stat) => [stat.id, stat])) : undefined
   const sizes = await Promise.all(candidates.map(async (id) => {
-    const image = await getImage(id)
-    return { width: image?.width, height: image?.height }
+    const meta = stats ? stats.get(id) : await getImageMeta(id)
+    return { width: meta?.width ?? undefined, height: meta?.height ?? undefined }
   }))
   const concurrency = getThumbnailConcurrencyForBatch(sizes)
   const selected = candidates.slice(0, concurrency)

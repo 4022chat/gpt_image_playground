@@ -62,6 +62,7 @@ import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
 import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureImageCached, scheduleMissingThumbnailBackfill } from './lib/imageCache'
+import { migrateImagesToBlob } from './lib/imageBlob'
 import { hasActiveDataOperations, isCustomRecoverableTask, isFalRecoverableTask } from './lib/dataOperations'
 import { formatExportFileTime } from './lib/exportFileName'
 import { buildExportZip, createExportBlob, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
@@ -1585,6 +1586,8 @@ export async function initStore() {
     }
   }
   void scheduleMissingThumbnailBackfill(referencedImageIds)
+  // 网页版旧数据的原图和缩略图以 dataUrl 字符串保存，首屏加载后在后台逐条转成 Blob
+  if (!isTauri) setTimeout(() => void migrateImagesToBlob(), 2_000)
 
   const restoredInputImages: InputImage[] = []
   for (const img of persistedInputImages) {

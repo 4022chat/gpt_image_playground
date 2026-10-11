@@ -26,7 +26,14 @@ vi.mock('./dbTauri', async (importOriginal) => ({
 import { DEFAULT_SETTINGS } from './apiProfiles'
 import { dataUrlToPayload } from './dbTauri'
 import { getExportImageSizes, readExportImages } from './exportImages'
-import { buildExportZip, getExportImageEstimatedBytes, readExportZip } from './exportZip'
+import { buildExportZip, getExportFileEstimatedBytes, readExportZip } from './exportZip'
+import { getDataUrlDecodedByteSize } from './imageApiShared'
+
+// 按 dataUrl 解码后的字节数估算，作为只取文件大小估算的对照
+const estimateFromDataUrl = (image: StoredImage, thumbnail?: StoredImageThumbnail) => getExportFileEstimatedBytes(
+  getDataUrlDecodedByteSize(image.dataUrl),
+  thumbnail?.thumbnailDataUrl ? getDataUrlDecodedByteSize(thumbnail.thumbnailDataUrl) : undefined,
+)
 
 // 模拟 Rust 侧：按 dataUrlToPayload 的结果保存，读取时返回原始二进制与元数据
 function storeLikeRust(images: StoredImage[], thumbnails: StoredImageThumbnail[]) {
@@ -149,9 +156,9 @@ describe('exportImages（客户端）', () => {
     ])
     const sizes = await getExportImageSizes(['a', 'b', 'c'])
     expect(sizes).toEqual([
-      { id: 'a', bytes: getExportImageEstimatedBytes(image, thumbnail) },
-      { id: 'b', bytes: getExportImageEstimatedBytes(image) },
-      { id: 'c', bytes: getExportImageEstimatedBytes(image) },
+      { id: 'a', bytes: estimateFromDataUrl(image, thumbnail) },
+      { id: 'b', bytes: estimateFromDataUrl(image) },
+      { id: 'c', bytes: estimateFromDataUrl(image) },
     ])
     expect(mocks.getImageFile).not.toHaveBeenCalled()
     expect(mocks.db.getImage).not.toHaveBeenCalled()

@@ -3,7 +3,6 @@ import { strFromU8, strToU8, type AsyncUnzipOptions, unzip, zip } from 'fflate'
 import type { AgentConversation, AppSettings, ExportData, FavoriteCollection, StoredImage, StoredImageThumbnail, TaskRecord } from '../types'
 import { bytesToDataUrl, dataUrlToBytes } from './dataUrl'
 import { getNumberedFileNameBase, sanitizeFileNamePart } from './exportFileName'
-import { getDataUrlDecodedByteSize } from './imageApiShared'
 
 type ZipFiles = Record<string, Uint8Array | [Uint8Array, { mtime: Date; level?: 0 }]>
 
@@ -280,13 +279,6 @@ function getBaseManifestEstimatedBytes(params: Omit<BuildExportZipParams, 'image
 
 function getJsonEstimatedBytes(value: unknown) {
   return strToU8(JSON.stringify(value)).byteLength + ZIP_ENTRY_OVERHEAD_BYTES
-}
-
-export function getExportImageEstimatedBytes(image: StoredImage, thumbnail?: StoredImageThumbnail) {
-  return getExportFileEstimatedBytes(
-    getDataUrlDecodedByteSize(image.dataUrl),
-    thumbnail?.thumbnailDataUrl ? getDataUrlDecodedByteSize(thumbnail.thumbnailDataUrl) : undefined,
-  )
 }
 
 /** 按文件字节数估算，客户端直接用磁盘上的文件大小，无需读出图片 */

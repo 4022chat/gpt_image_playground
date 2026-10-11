@@ -3,11 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const db = vi.hoisted(() => ({
   CURRENT_THUMBNAIL_VERSION: 2,
   getImage: vi.fn(),
+  getImageMeta: vi.fn(),
   getImageThumbnail: vi.fn(),
-  getStoredFreshImageThumbnail: vi.fn(),
+}))
+const imageBlob = vi.hoisted(() => ({
+  getThumbnailSource: vi.fn(),
+  getFreshThumbnailIds: vi.fn(),
 }))
 
 vi.mock('./db', () => db)
+vi.mock('./imageBlob', () => imageBlob)
 
 import {
   cacheImage,
@@ -16,6 +21,7 @@ import {
   deleteImageCacheEntry,
   ensureImageThumbnailCached,
   getCachedImage,
+  scheduleMissingThumbnailBackfill,
   scheduleThumbnailBackfill,
   subscribeImageThumbnail,
 } from './imageCache'
@@ -26,8 +32,10 @@ describe('imageCache', () => {
     clearImageCaches()
     vi.clearAllMocks()
     db.getImage.mockResolvedValue(undefined)
+    db.getImageMeta.mockResolvedValue(undefined)
     db.getImageThumbnail.mockResolvedValue(undefined)
-    db.getStoredFreshImageThumbnail.mockResolvedValue(undefined)
+    imageBlob.getThumbnailSource.mockResolvedValue(undefined)
+    imageBlob.getFreshThumbnailIds.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -53,13 +61,13 @@ describe('imageCache', () => {
       src: 'thumbnail-data-200',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
-    db.getStoredFreshImageThumbnail.mockResolvedValue({
-      thumbnailDataUrl: 'stored-thumbnail',
+    imageBlob.getThumbnailSource.mockResolvedValue({
+      src: 'stored-thumbnail',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
 
     await expect(ensureImageThumbnailCached('thumbnail-1')).resolves.toMatchObject({ src: 'stored-thumbnail' })
-    expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledWith('thumbnail-1')
+    expect(imageBlob.getThumbnailSource).toHaveBeenCalledWith('thumbnail-1', db.CURRENT_THUMBNAIL_VERSION)
   })
 
   it('keeps thumbnails in use and revokes blob URLs only after the last user leaves', () => {
@@ -96,8 +104,8 @@ describe('imageCache', () => {
       src: 'stale-thumbnail',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION - 1,
     })
-    db.getStoredFreshImageThumbnail.mockResolvedValue({
-      thumbnailDataUrl: 'fresh-thumbnail',
+    imageBlob.getThumbnailSource.mockResolvedValue({
+      src: 'fresh-thumbnail',
       width: 640,
       height: 480,
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
@@ -109,11 +117,11 @@ describe('imageCache', () => {
       height: 480,
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
-    expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledOnce()
+    expect(imageBlob.getThumbnailSource).toHaveBeenCalledOnce()
 
-    db.getStoredFreshImageThumbnail.mockClear()
+    imageBlob.getThumbnailSource.mockClear()
     await ensureImageThumbnailCached('image')
-    expect(db.getStoredFreshImageThumbnail).not.toHaveBeenCalled()
+    expect(imageBlob.getThumbnailSource).not.toHaveBeenCalled()
   })
 
   it('deletes individual entries and clears both caches', async () => {
@@ -123,8 +131,8 @@ describe('imageCache', () => {
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
     deleteImageCacheEntry('deleted')
-    db.getStoredFreshImageThumbnail.mockResolvedValueOnce({
-      thumbnailDataUrl: 'stored-deleted-thumbnail',
+    imageBlob.getThumbnailSource.mockResolvedValueOnce({
+      src: 'stored-deleted-thumbnail',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
 
@@ -132,7 +140,7 @@ describe('imageCache', () => {
     await expect(ensureImageThumbnailCached('deleted')).resolves.toMatchObject({
       src: 'stored-deleted-thumbnail',
     })
-    expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledWith('deleted')
+    expect(imageBlob.getThumbnailSource).toHaveBeenCalledWith('deleted', db.CURRENT_THUMBNAIL_VERSION)
 
     cacheImage('cleared', 'cleared-data')
     cacheThumbnail('cleared', {
@@ -140,9 +148,9 @@ describe('imageCache', () => {
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
     clearImageCaches()
-    db.getStoredFreshImageThumbnail.mockClear()
-    db.getStoredFreshImageThumbnail.mockResolvedValueOnce({
-      thumbnailDataUrl: 'stored-cleared-thumbnail',
+    imageBlob.getThumbnailSource.mockClear()
+    imageBlob.getThumbnailSource.mockResolvedValueOnce({
+      src: 'stored-cleared-thumbnail',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
 
@@ -150,12 +158,12 @@ describe('imageCache', () => {
     await expect(ensureImageThumbnailCached('cleared')).resolves.toMatchObject({
       src: 'stored-cleared-thumbnail',
     })
-    expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledWith('cleared')
+    expect(imageBlob.getThumbnailSource).toHaveBeenCalledWith('cleared', db.CURRENT_THUMBNAIL_VERSION)
   })
 
   it('prioritizes visible thumbnail backfills and notifies subscribers', async () => {
     vi.useFakeTimers()
-    db.getImage.mockResolvedValue({ width: 1000, height: 1000 })
+    db.getImageMeta.mockResolvedValue({ width: 1000, height: 1000 })
     db.getImageThumbnail.mockImplementation(async (id: string) => ({
       thumbnailDataUrl: `${id}-thumbnail`,
       width: 1000,
@@ -170,7 +178,7 @@ describe('imageCache', () => {
     await vi.advanceTimersByTimeAsync(250)
     await vi.waitFor(() => expect(db.getImageThumbnail).toHaveBeenCalledTimes(2))
 
-    expect(db.getImage.mock.calls.map(([id]) => id)).toEqual(['visible', 'background'])
+    expect(db.getImageMeta.mock.calls.map(([id]) => id)).toEqual(['visible', 'background'])
     expect(db.getImageThumbnail.mock.calls.map(([id]) => id)).toEqual(['visible', 'background'])
     expect(onThumbnail).toHaveBeenCalledWith({
       src: 'visible-thumbnail',
@@ -182,7 +190,7 @@ describe('imageCache', () => {
 
   it('allows a failed thumbnail backfill to be scheduled again', async () => {
     vi.useFakeTimers()
-    db.getImage.mockResolvedValue({ width: 1000, height: 1000 })
+    db.getImageMeta.mockResolvedValue({ width: 1000, height: 1000 })
     db.getImageThumbnail
       .mockRejectedValueOnce(new Error('thumbnail failed'))
       .mockResolvedValueOnce({
@@ -197,5 +205,36 @@ describe('imageCache', () => {
     scheduleThumbnailBackfill(['image'])
     await vi.advanceTimersByTimeAsync(250)
     await vi.waitFor(() => expect(db.getImageThumbnail).toHaveBeenCalledTimes(2))
+  })
+
+  it('only reads originals for images missing a current thumbnail', async () => {
+    vi.useFakeTimers()
+    imageBlob.getFreshThumbnailIds.mockResolvedValue(['fresh-1', 'fresh-2'])
+    db.getImageMeta.mockResolvedValue({ width: 1000, height: 1000 })
+    db.getImageThumbnail.mockImplementation(async (id: string) => ({
+      thumbnailDataUrl: `${id}-thumbnail`,
+      thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
+    }))
+
+    await scheduleMissingThumbnailBackfill(['fresh-1', 'missing', 'fresh-2', 'stale'])
+    await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => expect(db.getImageThumbnail).toHaveBeenCalledTimes(2))
+
+    expect(imageBlob.getFreshThumbnailIds).toHaveBeenCalledWith(db.CURRENT_THUMBNAIL_VERSION)
+    expect(db.getImageMeta.mock.calls.map(([id]) => id)).toEqual(['missing', 'stale'])
+    expect(db.getImageThumbnail.mock.calls.map(([id]) => id)).toEqual(['missing', 'stale'])
+  })
+
+  it('falls back to backfilling every image when the thumbnail index query fails', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    imageBlob.getFreshThumbnailIds.mockRejectedValue(new Error('index missing'))
+    db.getImageMeta.mockResolvedValue({ width: 1000, height: 1000 })
+
+    await scheduleMissingThumbnailBackfill(['a', 'b'])
+    await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => expect(db.getImageThumbnail).toHaveBeenCalledTimes(2))
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
   })
 })

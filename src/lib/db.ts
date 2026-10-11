@@ -23,6 +23,7 @@ export const {
   clearAgentConversations,
   replaceAgentConversations,
   getImage,
+  getImageMeta,
   getStoredImageThumbnail,
   putImageThumbnail,
   getAllImages,
@@ -34,17 +35,14 @@ export const {
 
 // ===== Thumbnails =====
 
-export async function getStoredFreshImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
-  const thumbnail = await getStoredImageThumbnail(id)
-  return thumbnail?.thumbnailVersion === THUMBNAIL_VERSION ? thumbnail : undefined
-}
-
 export async function getImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
   const existingThumbnail = await getStoredImageThumbnail(id)
   if (existingThumbnail?.thumbnailVersion === THUMBNAIL_VERSION) {
-    const image = await getImage(id)
-    if (image && (!image.width || !image.height) && existingThumbnail.width && existingThumbnail.height) {
-      await putImage({ ...image, width: existingThumbnail.width, height: existingThumbnail.height })
+    // 先只查元数据，确实缺宽高时才读出整张原图写回
+    const meta = await getImageMeta(id)
+    if (meta && (!meta.width || !meta.height) && existingThumbnail.width && existingThumbnail.height) {
+      const image = await getImage(id)
+      if (image) await putImage({ ...image, width: existingThumbnail.width, height: existingThumbnail.height })
     }
     return existingThumbnail
   }

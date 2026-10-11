@@ -53,7 +53,7 @@ vi.mock('./lib/db', () => {
     getImage: async (id: string) => images.get(id),
     getStoredImageThumbnail: async (id: string) => thumbnails.get(id),
     getImageThumbnail: async (id: string) => thumbnails.get(id),
-    getStoredFreshImageThumbnail: async (id: string) => thumbnails.get(id),
+    getImageMeta: async (id: string) => images.get(id),
     getAllImageIds: async () => [...images.keys()],
     getAllImages: async () => [...images.values()],
     putImage: async (image: StoredImage) => {
@@ -132,7 +132,7 @@ vi.mock('./lib/agentApi', async (importOriginal) => {
     })),
   }
 })
-import { clearAgentConversations, clearImages, clearTasks, commitTaskDeletion, deleteImage as deleteDbImage, deleteTask as deleteDbTask, getAllAgentConversations, getAllImageIds, getAllTasks, getImage, getStoredFreshImageThumbnail, putAgentConversation, putImage, putImageThumbnail, putTask as putDbTask } from './lib/db'
+import { clearAgentConversations, clearImages, clearTasks, commitTaskDeletion, deleteImage as deleteDbImage, deleteTask as deleteDbTask, getAllAgentConversations, getAllImageIds, getAllTasks, getImage, getStoredImageThumbnail, putAgentConversation, putImage, putImageThumbnail, putTask as putDbTask } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { getFalQueuedImageResult } from './lib/falAiImageApi'
@@ -3978,7 +3978,7 @@ describe('task deletion', () => {
     await removeTask(deleted)
 
     await expect(getImage('referenced-late')).resolves.toMatchObject({ dataUrl: 'data:image/png;base64,second' })
-    await expect(getStoredFreshImageThumbnail('referenced-late')).resolves.toMatchObject({ thumbnailDataUrl: 'data:image/webp;base64,thumb' })
+    await expect(getStoredImageThumbnail('referenced-late')).resolves.toMatchObject({ thumbnailDataUrl: 'data:image/webp;base64,thumb', thumbnailVersion: 2 })
     expect(deleteDbImage).toHaveBeenCalledTimes(1)
   })
 

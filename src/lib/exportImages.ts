@@ -1,15 +1,17 @@
 import type { StoredImage, StoredImageThumbnail } from '../types'
 import { CURRENT_THUMBNAIL_VERSION, getImage, getImageThumbnail } from './db'
 import { getImageFile, getImageStats, getThumbnailFile } from './dbTauri'
-import { getExportFileEstimatedBytes, getExportImageEstimatedBytes, type ExportImageFile, type ExportImageSize, type ExportThumbnailFile } from './exportZip'
+import { getExportFileEstimatedBytes, type ExportImageFile, type ExportImageSize, type ExportThumbnailFile } from './exportZip'
+import { getDataUrlDecodedByteSize } from './imageApiShared'
+import { fromImageRecord, getStoredImageRecord, getStoredThumbnailRecord } from './imageBlob'
 import { cacheThumbnail } from './imageCache'
 import { isTauri } from './platform'
 
-// 网页版 dataUrlToBytes 只从 data:image/<单词>;base64 推出扩展名，其他情况一律为 png 且解码方式不同。
-// 客户端只对这种 mime 直接使用文件二进制，其余回退到 dataUrl，保证 ZIP 内容与网页版完全一致
+// 经 dataUrl 导出时 dataUrlToBytes 只从 data:image/<单词>;base64 推出扩展名，其他情况一律为 png 且解码方式不同。
+// 客户端文件与网页版 Blob 只对这种 mime 直接使用二进制，其余回退到 dataUrl，保证 ZIP 内容与经 dataUrl 导出时完全一致
 const SIMPLE_IMAGE_MIME = /^image\/(\w+)$/
 
-/** 估算每张图片在备份中的大小：客户端只查询文件大小；网页版需读出原图和缩略图（缺失的缩略图会顺带补全） */
+/** 估算每张图片在备份中的大小，只取文件大小、不读出图片；缺少当前版本缩略图时不计缩略图 */
 export async function getExportImageSizes(imageIds: string[], onProgress?: (done: number) => void): Promise<ExportImageSize[]> {
   if (isTauri) {
     const ids = new Set(imageIds)
@@ -24,10 +26,13 @@ export async function getExportImageSizes(imageIds: string[], onProgress?: (done
   const sizes: ExportImageSize[] = []
   for (const [idx, id] of imageIds.entries()) {
     onProgress?.(idx)
-    const image = await getImage(id)
+    const image = await getStoredImageRecord(id)
     if (!image) continue
-    const thumbnail = await getImageThumbnail(id)
-    sizes.push({ id, bytes: getExportImageEstimatedBytes(image, thumbnail) })
+    const thumbnail = await getStoredThumbnailRecord(id)
+    const thumbnailBytes = thumbnail?.thumbnailVersion !== CURRENT_THUMBNAIL_VERSION
+      ? undefined
+      : thumbnail.blob?.size ?? (thumbnail.thumbnailDataUrl ? getDataUrlDecodedByteSize(thumbnail.thumbnailDataUrl) : undefined)
+    sizes.push({ id, bytes: getExportFileEstimatedBytes(image.blob?.size ?? getDataUrlDecodedByteSize(image.dataUrl ?? ''), thumbnailBytes) })
   }
   return sizes
 }
@@ -65,12 +70,9 @@ export async function readExportImages(ids: string[], onProgress?: (done: number
   return { images, thumbnailsByImageId }
 }
 
-/** 读取原图；客户端顺带读取可直接使用的缩略图二进制，返回的 thumbnail 为空表示需要 getImageThumbnail */
+/** 读取原图；顺带读取可直接使用的缩略图二进制，返回的 thumbnail 为空表示需要 getImageThumbnail */
 async function readExportImage(id: string): Promise<{ image: StoredImage | ExportImageFile; thumbnail?: ExportThumbnailFile } | undefined> {
-  if (!isTauri) {
-    const image = await getImage(id)
-    return image && { image }
-  }
+  if (!isTauri) return readWebExportImage(id)
 
   const file = await getImageFile(id)
   if (!file) return undefined
@@ -100,6 +102,33 @@ async function readExportImage(id: string): Promise<{ image: StoredImage | Expor
       width: thumbnailFile.meta.width ?? undefined,
       height: thumbnailFile.meta.height ?? undefined,
       thumbnailVersion: thumbnailFile.meta.thumbnailVersion,
+    },
+  }
+}
+
+/** 网页版：Blob 记录直接取二进制，省去 base64 编码再解码；旧版字符串记录仍经 dataUrl */
+async function readWebExportImage(id: string): Promise<{ image: StoredImage | ExportImageFile; thumbnail?: ExportThumbnailFile } | undefined> {
+  const rec = await getStoredImageRecord(id)
+  if (!rec) return undefined
+  const ext = rec.blob && SIMPLE_IMAGE_MIME.exec(rec.blob.type)?.[1]
+  const { blob, dataUrl, ...meta } = rec
+  const image = ext && blob
+    ? { ...meta, ext, bytes: new Uint8Array(await blob.arrayBuffer()) }
+    : await fromImageRecord(rec)
+  if (!image) return undefined
+
+  const thumbnail = await getStoredThumbnailRecord(id)
+  const thumbnailExt = thumbnail?.blob && SIMPLE_IMAGE_MIME.exec(thumbnail.blob.type)?.[1]
+  if (!thumbnail?.blob || !thumbnailExt || thumbnail.thumbnailVersion !== CURRENT_THUMBNAIL_VERSION) return { image }
+  return {
+    image,
+    thumbnail: {
+      id,
+      ext: thumbnailExt,
+      bytes: new Uint8Array(await thumbnail.blob.arrayBuffer()),
+      width: thumbnail.width,
+      height: thumbnail.height,
+      thumbnailVersion: thumbnail.thumbnailVersion,
     },
   }
 }
