@@ -149,10 +149,10 @@ export function installExternalLinkHandler() {
   }
 }
 
-// 刷新、前进后退、查找、打印、查看源码、保存页面等浏览器快捷键，在客户端中会刷掉进行中的任务或打开无关界面；
-// 缩放（Ctrl+加减号/0）和开发者工具（F12、Ctrl+Shift+I）不在其中
-const BLOCKED_KEYS = new Set(['f5', 'f3', 'f7', 'browserrefresh', 'browserback', 'browserforward', 'browsersearch'])
-const BLOCKED_CTRL_KEYS = new Set(['r', 'p', 'f', 'g', 'u', 's'])
+// 刷新、前进后退、打印、查看源码、保存页面等浏览器快捷键，在客户端中会刷掉进行中的任务或打开无关界面；
+// 缩放（Ctrl+加减号/0）、开发者工具（F12、Ctrl+Shift+I）和页面内查找（Ctrl+F，以及查找下一个 F3、Ctrl+G，可用来匹配提示词正文）不在其中
+const BLOCKED_KEYS = new Set(['f5', 'f7', 'browserrefresh', 'browserback', 'browserforward', 'browsersearch'])
+const BLOCKED_CTRL_KEYS = new Set(['r', 'p', 'u', 's'])
 // 单按 Alt 或 F10 会让宿主窗口进入系统菜单模式，期间所有 IPC 停住；按下和松开都要阻止。
 // 只拦截这两个键本身，Alt+F4、Alt+Tab、Alt+Space 和 Alt+滚轮不受影响
 const MENU_KEYS = new Set(['alt', 'f10'])
