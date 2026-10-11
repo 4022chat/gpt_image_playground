@@ -1,3 +1,4 @@
+mod close_watch;
 mod data_dir;
 mod diagnostics;
 mod files;
@@ -12,6 +13,8 @@ use tauri::Manager;
 pub fn run() {
     // 日志、存储和 WebView2 都使用数据目录，需最先确定；有待迁移的更改时在此完成迁移
     data_dir::prepare();
+    // API 请求和更新插件的 reqwest 都不带加密实现，使用进程默认的 ring（更新插件检查时也会按需安装同一个）
+    let _ = rustls::crypto::ring::default_provider().install_default();
     tauri::Builder::default()
         // single-instance 需最先注册，第二个实例启动时把已有主窗口带到前台后退出。
         // 开启 deep-link feature 后，第二个实例收到的 deep link 会先转交 deep-link 插件，由前端监听导入
@@ -82,8 +85,13 @@ pub fn run() {
             update::update_ready,
             update::update_download,
             update::update_install,
-            update::update_discard,
+            close_watch::close_ack,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                close_watch::on_close_requested(window);
+            }
+        })
         .manage(files::SaveDirs::default())
         .manage(files::Writes::default())
         .manage(files::MigrateSource::default())

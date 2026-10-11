@@ -23,11 +23,6 @@ export function installUpdate() {
   return invoke<void>('update_install')
 }
 
-/** 仅客户端：删除已下载的更新包 */
-export function discardUpdate() {
-  return invoke<void>('update_discard')
-}
-
 /** 下载按钮上显示的进度，未知总大小时显示已下载的 MB */
 export function formatUpdateProgress(progress: UpdateProgress) {
   if (progress.total) return `${Math.min(100, Math.floor((progress.downloaded / progress.total) * 100))}%`

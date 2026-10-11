@@ -68,6 +68,8 @@ describe('tauriStorage', () => {
     let closed = false
     const closing = handler().then(() => { closed = true })
     await Promise.resolve()
+    // 先回执关闭请求，再写入
+    expect(invoke).toHaveBeenNthCalledWith(1, 'close_ack')
     expect(invoke).toHaveBeenCalledWith('kv_set', { key: 'k', value: 'v' }, undefined)
     expect(closed).toBe(false)
     release()
@@ -76,7 +78,7 @@ describe('tauriStorage', () => {
 
     // 已写入后计时器不会再重复写
     await vi.advanceTimersByTimeAsync(300)
-    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledTimes(2)
   })
 
   it('关闭确认取消时阻止关闭且不写入，确认后写完再关', async () => {
@@ -89,13 +91,45 @@ describe('tauriStorage', () => {
     const cancelled = { preventDefault: vi.fn() }
     await handler(cancelled)
     expect(cancelled.preventDefault).toHaveBeenCalled()
-    expect(invoke).not.toHaveBeenCalled()
+    // 等待确认前已回执，确认期间不会被 Rust 侧强制关闭；取消时不写入
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('close_ack')
 
     setTauriCloseGuard(async () => true)
     const confirmed = { preventDefault: vi.fn() }
     await handler(confirmed)
     expect(confirmed.preventDefault).not.toHaveBeenCalled()
     expect(invoke).toHaveBeenCalledWith('kv_set', { key: 'k', value: 'v' }, undefined)
+  })
+
+  it('确认等待期间已发出回执', async () => {
+    const { installTauriStorageFlush, setTauriCloseGuard } = await setup()
+    await installTauriStorageFlush()
+    const handler = onCloseRequested.mock.lastCall?.[0] as (event: { preventDefault: () => void }) => Promise<void>
+    let answer = (_: boolean) => {}
+    setTauriCloseGuard(() => new Promise<boolean>((resolve) => { answer = resolve }))
+    const closing = handler({ preventDefault: vi.fn() })
+    await Promise.resolve()
+    expect(invoke).toHaveBeenCalledWith('close_ack')
+    answer(false)
+    await closing
+  })
+
+  it('写入挂起时限时后仍继续关闭', async () => {
+    const { tauriStorage, installTauriStorageFlush } = await setup()
+    await installTauriStorageFlush()
+    const handler = onCloseRequested.mock.lastCall?.[0] as (event: { preventDefault: () => void }) => Promise<void>
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    invoke.mockImplementation((cmd: string) => (cmd === 'kv_set' ? new Promise(() => {}) : Promise.resolve()))
+    tauriStorage.setItem('k', 'v')
+    let closed = false
+    const closing = handler({ preventDefault: vi.fn() }).then(() => { closed = true })
+    await vi.advanceTimersByTimeAsync(2900)
+    expect(closed).toBe(false)
+    await vi.advanceTimersByTimeAsync(100)
+    await closing
+    expect(closed).toBe(true)
+    expect(warn).toHaveBeenCalled()
   })
 
   it('页面隐藏时立即写入', async () => {

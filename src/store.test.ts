@@ -232,11 +232,11 @@ describe('data operation locking', () => {
   })
 
   it('closing the client only warns about work that cannot resume after restart', async () => {
-    expect(hasInterruptibleOperations([task({ status: 'running' })], [])).toBe(true)
-    expect(hasInterruptibleOperations([task({ status: 'running', apiProvider: 'fal', falRequestId: 'req', falEndpoint: 'fal-ai/x' })], [])).toBe(false)
-    expect(hasInterruptibleOperations([task({ status: 'running', apiProvider: 'fal', falRequestId: 'req' })], [])).toBe(true)
-    expect(hasInterruptibleOperations([task({ status: 'running', customTaskId: 'job' })], [])).toBe(false)
-    expect(hasInterruptibleOperations([task({ falRecoverable: true, apiProvider: 'fal', falRequestId: 'req', falEndpoint: 'fal-ai/x' })], [])).toBe(false)
+    expect(hasInterruptibleOperations([task({ status: 'running' })], [], null)).toBe(true)
+    expect(hasInterruptibleOperations([task({ status: 'running', apiProvider: 'fal', falRequestId: 'req', falEndpoint: 'fal-ai/x' })], [], null)).toBe(false)
+    expect(hasInterruptibleOperations([task({ status: 'running', apiProvider: 'fal', falRequestId: 'req' })], [], null)).toBe(true)
+    expect(hasInterruptibleOperations([task({ status: 'running', customTaskId: 'job' })], [], null)).toBe(false)
+    expect(hasInterruptibleOperations([task({ falRecoverable: true, apiProvider: 'fal', falRequestId: 'req', falEndpoint: 'fal-ai/x' })], [], null)).toBe(false)
     expect(hasInterruptibleOperations([task()], [agentConversation({
       rounds: [{
         id: 'round-a',
@@ -250,14 +250,20 @@ describe('data operation locking', () => {
         createdAt: 1,
         finishedAt: null,
       }],
-    })])).toBe(true)
+    })], null)).toBe(true)
 
     let release = () => {}
     const transfer = trackDataTransfer(() => new Promise<void>((resolve) => { release = resolve }))
-    expect(hasInterruptibleOperations([], [])).toBe(true)
+    expect(hasInterruptibleOperations([], [], null)).toBe(true)
     release()
     await transfer
-    expect(hasInterruptibleOperations([], [])).toBe(false)
+    expect(hasInterruptibleOperations([], [], null)).toBe(false)
+
+    // 批量中尚未开始的提示词只在内存中，即使已开始的任务都可恢复也要提示
+    const recoverable = [task({ status: 'running', customTaskId: 'job' })]
+    expect(hasInterruptibleOperations(recoverable, [], { total: 3, started: 1, finished: 0 })).toBe(true)
+    expect(hasInterruptibleOperations(recoverable, [], { total: 3, started: 3, finished: 2 })).toBe(false)
+    expect(hasInterruptibleOperations(recoverable, [], null)).toBe(false)
   })
 })
 

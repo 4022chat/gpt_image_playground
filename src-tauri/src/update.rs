@@ -247,20 +247,6 @@ pub async fn update_download<R: Runtime>(
     Ok(())
 }
 
-/// 删除已下载的安装包，用户放弃安装旧版本时调用
-#[tauri::command]
-pub async fn update_discard() -> Result<(), String> {
-    let _busy = acquire()?;
-    *DOWNLOADED.lock().unwrap() = None;
-    let dir = updates_dir()?;
-    tauri::async_runtime::spawn_blocking(move || match fs::remove_dir_all(&dir) {
-        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(format!("删除安装包失败：{err}")),
-        _ => Ok(()),
-    })
-    .await
-    .map_err(|err| format!("删除安装包异常结束：{err}"))?
-}
-
 /// 校验本地安装包后安装并重启，安装的始终是已下载的版本；Windows 上插件启动安装程序后直接退出应用，由安装程序重新打开。
 /// 插件的 install 只能通过 Update 调用（Windows 上按安装包内容判断类型，版本只用于临时文件名）：
 /// 安装时不读取下载地址和签名。本次运行中下载的直接使用；重启后没有时联网检查取得句柄，只需把版本改为已下载的版本

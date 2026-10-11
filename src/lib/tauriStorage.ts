@@ -1,9 +1,12 @@
+import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { StateStorage } from 'zustand/middleware'
 import { call } from './dbTauri'
 
 // 设置每次变化都会触发 persist 写入，合并到停顿后再写库
 const FLUSH_DELAY_MS = 300
+// 关闭窗口和安装更新前最多等待写入这么久，某次写入挂起时仍能继续退出
+const EXIT_FLUSH_TIMEOUT_MS = 3000
 
 const cache = new Map<string, string>()
 const dirty = new Set<string>()
@@ -53,6 +56,18 @@ export function flushTauriStorage() {
   return writing
 }
 
+/** 关闭窗口或安装更新前写入，限时等待 */
+export function flushTauriStorageBeforeExit() {
+  let limit: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<void>((resolve) => {
+    limit = setTimeout(() => {
+      console.warn('保存本地设置超时，继续退出')
+      resolve()
+    }, EXIT_FLUSH_TIMEOUT_MS)
+  })
+  return Promise.race([flushTauriStorage(), timeout]).finally(() => clearTimeout(limit))
+}
+
 function markDirty(key: string) {
   dirty.add(key)
   clearTimeout(timer)
@@ -88,9 +103,11 @@ export async function installTauriStorageFlush() {
   })
   window.addEventListener('pagehide', () => void flushTauriStorage())
   // 处理函数返回后 Tauri 才会销毁窗口，且每个监听返回后都会各自销毁窗口，所以关闭确认和写入共用这一个监听：
-  // 先确认（等待用户选择期间窗口保持打开），取消则阻止关闭；确认或无需确认时写完设置再关
+  // 先确认（等待用户选择期间窗口保持打开），取消则阻止关闭；确认或无需确认时写完设置再关。
+  // 开始处理时先回执，Rust 侧在约 8 秒内收不到回执会认为页面卡死并强制关闭窗口
   await getCurrentWindow().onCloseRequested(async (event) => {
+    invoke('close_ack').catch((err) => console.warn('关闭请求回执失败：', err))
     if (closeGuard && !(await closeGuard())) return event.preventDefault()
-    await flushTauriStorage()
+    await flushTauriStorageBeforeExit()
   })
 }

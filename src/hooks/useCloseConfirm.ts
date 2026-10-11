@@ -18,7 +18,7 @@ export function useCloseConfirm() {
 
     setTauriCloseGuard(async () => {
       const state = useStore.getState()
-      if (!hasInterruptibleOperations(state.tasks, state.agentConversations)) return true
+      if (!hasInterruptibleOperations(state.tasks, state.agentConversations, state.batchProgress)) return true
       // 确认仍在等待时再次请求关闭，直接关闭（即连点两次关闭会跳过确认，这是有意为之）：确认框可能因渲染异常没有显示出来，否则窗口将无法关闭
       if (waiting) return true
 

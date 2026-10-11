@@ -22,8 +22,11 @@ tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-window-state = "2"
 log = "0.4"
-# 与 tauri-plugin-http 2.8 使用的版本和 TLS 实现一致（rustls + 内置根证书），并跟随系统代理
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "system-proxy"] }
+# 与 tauri-plugin-updater 使用同一版本：rustls + 系统证书库校验（rustls-platform-verifier），
+# 能识别企业 HTTPS 解密、杀毒软件 HTTPS 扫描和导入系统的自签 CA；并跟随系统代理。
+# 不带加密实现，启动时安装 ring（与更新插件一致），见 lib.rs
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

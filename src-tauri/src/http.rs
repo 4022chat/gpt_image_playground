@@ -317,8 +317,14 @@ pub fn http_cancel(id: String, state: State<'_, Requests>) {
 mod tests {
     use super::*;
 
+    /// 应用启动时在 lib.rs 安装加密实现，测试中需自行安装
+    fn init() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn reports_unreachable_proxy() {
+        init();
         // 取一个刚释放、没有服务监听的本机端口作为代理
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let route = Route::Via(crate::proxy::parse(&format!("127.0.0.1:{port}")).unwrap().1);
@@ -339,6 +345,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn strips_url_from_error_detail() {
+        init();
         use std::io::{Read, Write};
         // reqwest 的 Display 带完整请求地址；状态码错误没有 source，最内层说明就是它本身
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -377,6 +384,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn reports_refused_connection_with_os_code_only() {
+        init();
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let msg = send_direct(format!("http://127.0.0.1:{port}/")).await;
         // 只附系统错误码，不附错误链和系统说明
@@ -386,6 +394,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn reports_dns_error_without_chain() {
+        init();
         let msg = send_direct("https://gip-test.invalid/".into()).await;
         assert!(msg.starts_with("无法解析域名，请检查 API 地址是否正确。"), "{msg}");
         assert!(!msg.contains("dns error") && !msg.contains("os error"), "{msg}");

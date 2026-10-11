@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { discardClientUpdate, refreshClientUpdate, startClientUpdateDownload, startClientUpdateInstall, useClientUpdate } from '../hooks/useClientUpdate'
+import { refreshClientUpdate, requestClientUpdateInstall, startClientUpdateDownload, useClientUpdate } from '../hooks/useClientUpdate'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { usePullUpToLoad } from '../hooks/usePullUpToLoad'
@@ -39,8 +39,6 @@ function ClientUpdateError() {
 function ClientUpdateButton({ version }: { version: string }) {
   const status = useClientUpdate((s) => s.status)
   const progress = useClientUpdate((s) => s.progress)
-  const readyVersion = useClientUpdate((s) => s.readyVersion)
-  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
 
   // 最新版本变化时重新检查本地安装包
   useEffect(() => {
@@ -49,16 +47,7 @@ function ClientUpdateButton({ version }: { version: string }) {
 
   const handleClick = () => {
     if (status !== 'ready') return void startClientUpdateDownload(version)
-    if (compareVersions(readyVersion, version) >= 0) return void startClientUpdateInstall()
-    // 下载后又发布了新版本：由用户决定继续安装已下载的版本，还是删除它重新下载
-    setConfirmDialog({
-      title: '发现更新的版本',
-      message: `检测到有更新的版本 v${version}，是否继续安装已下载的 v${readyVersion}？`,
-      confirmText: '继续安装',
-      cancelText: '取消',
-      action: () => void startClientUpdateInstall(),
-      cancelAction: () => void discardClientUpdate(),
-    })
+    requestClientUpdateInstall(version)
   }
 
   const label = status === 'downloading' && progress ? `下载中 ${formatUpdateProgress(progress)}` : CLIENT_UPDATE_LABELS[status]
