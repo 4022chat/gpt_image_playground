@@ -104,7 +104,7 @@ export default function StorageInfoSection() {
         <div className="space-y-2 text-xs text-gray-500 dark:text-gray-400">
           <div className="break-all">
             <span className="text-gray-600 dark:text-gray-300">数据目录：</span>
-            <span className="select-text">{info?.dataDir ?? '读取中...'}</span>
+            <span className="select-text">{info?.dataDir ?? '读取中…'}</span>
             {info && (
               // 紧跟在路径末尾，与文字同高同色，悬停时才加深
               <button
@@ -118,7 +118,8 @@ export default function StorageInfoSection() {
               </button>
             )}
           </div>
-          {rows.length > 0 && (
+          {/* 统计期间占住一行，避免加载完后内容下移、恢复的滚动位置被截短 */}
+          {rows.length > 0 ? (
             <div className="flex flex-wrap gap-x-6 gap-y-1">
               {rows.map(([label, value]) => (
                 <span key={label}>
@@ -127,6 +128,8 @@ export default function StorageInfoSection() {
                 </span>
               ))}
             </div>
+          ) : (
+            <div>正在统计占用空间…</div>
           )}
         </div>
       )}

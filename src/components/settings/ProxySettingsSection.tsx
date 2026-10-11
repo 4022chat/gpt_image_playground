@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
-import { getProxySetting, setProxySetting, type ProxyMode, type ProxySetting } from '../../lib/networkProxy'
+import { getCachedProxySetting, getProxySetting, setProxySetting, type ProxyMode, type ProxySetting } from '../../lib/networkProxy'
 import { useStore } from '../../store'
 import Select from '../Select'
 
 /** 仅客户端：API 请求和应用内更新使用的网络代理 */
 export default function ProxySettingsSection() {
   const showToast = useStore((s) => s.showToast)
-  const [saved, setSaved] = useState<ProxySetting | null>(null)
+  // 启动时已预先读取，通常首次渲染就有值
+  const [saved, setSaved] = useState(getCachedProxySetting)
   // 选择“自定义”后先显示地址输入框，填写有效地址后才保存并生效
-  const [mode, setMode] = useState<ProxyMode>('system')
-  const [url, setUrl] = useState('')
+  const [mode, setMode] = useState<ProxyMode>(() => saved?.mode ?? 'system')
+  const [url, setUrl] = useState(() => saved?.url ?? '')
   const [error, setError] = useState('')
   const [showUrl, setShowUrl] = useState(false)
   // 自定义地址保存失败时下拉框回到生效中的模式，地址输入框仍保留以便修改
@@ -19,6 +20,7 @@ export default function ProxySettingsSection() {
   const hasAuth = url.includes('@')
 
   useEffect(() => {
+    if (saved) return
     getProxySetting()
       .then((setting) => {
         setSaved(setting)

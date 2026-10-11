@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import 'streamdown/styles.css'
 import 'katex/dist/katex.min.css'
 import './index.css'
+import { getProxySetting } from './lib/networkProxy'
 import { installBrowserBehaviorGuards, installExternalLinkHandler, isTauri } from './lib/platform'
 import { installTauriLog } from './lib/tauriLog'
 import { installTauriStorageFlush, loadTauriStorage } from './lib/tauriStorage'
@@ -15,6 +16,8 @@ if (isTauri) {
   installTauriLog()
   installExternalLinkHandler()
   installBrowserBehaviorGuards()
+  // 预先读取代理设置，打开设置时不必等待；失败时由设置页重新读取并显示原因
+  void getProxySetting().catch((err) => console.warn('预读代理设置失败：', err))
 }
 
 // 客户端不注册 Service Worker，避免缓存与客户端版本更新冲突
