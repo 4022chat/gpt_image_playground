@@ -1,15 +1,18 @@
 //! 保存文件：保存对话框和目录选择都在 Rust 侧弹出，前端只能写入用户刚在对话框中选择的位置，
 //! 不开放写任意路径的命令。默认保存地址同样只能经 Rust 侧的目录选择框更改，前端只能读取用于显示。
-//! 文件内容通过 IPC 请求体以二进制传输，避免 base64 或 JSON 数组
-use std::fs::{self, File, OpenOptions};
+//! 文件内容以二进制 IPC 请求体分块传输：先在目标目录中创建临时文件，逐块追加，写完后改名为目标文件。
+//! 整个文件一次传输时，WebView2 浏览器进程会为几百 MB 的请求体占用数 GB 内存
+use std::collections::HashMap;
+use std::fs;
 use std::io::{self, ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
+use tempfile::NamedTempFile;
 
 use crate::storage::{self, Storage, StorageState};
 
@@ -55,16 +58,11 @@ fn is_plain_file_name(name: &str) -> bool {
         && !RESERVED_NAMES.iter().any(|r| r.eq_ignore_ascii_case(stem))
 }
 
-fn file_name(request: &Request<'_>) -> Result<String, String> {
-    // 前端用 encodeURIComponent 编码，文件名可以包含中文等非 ASCII 字符
-    let name = percent_encoding::percent_decode_str(header(request, "x-name"))
-        .decode_utf8()
-        .map_err(|_| "文件名不是合法的 UTF-8".to_string())?
-        .into_owned();
-    if !is_plain_file_name(&name) {
+fn check_name(name: &str) -> Result<(), String> {
+    if !is_plain_file_name(name) {
         return Err(format!("文件名不合法：{name}"));
     }
-    Ok(name)
+    Ok(())
 }
 
 const IN_DATA_DIR: &str = "不能选择应用数据目录或其中的文件夹，请选择其他位置";
@@ -118,26 +116,81 @@ fn into_path(picked: Option<FilePath>) -> Result<Option<PathBuf>, String> {
         .transpose()
 }
 
-/// 写入失败时删除写了一半的文件；打开失败时文件可能是用户原有的，不删除
-fn write_to(mut file: File, path: &Path, bytes: &[u8]) -> io::Result<()> {
-    if let Err(err) = file.write_all(bytes) {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(err);
+/// 写入完成后的去向
+enum Target {
+    /// 保存对话框选中的路径，对话框已确认覆盖
+    Replace(PathBuf),
+    /// 登记目录中的文件名，已有同名文件时加序号
+    Unique(PathBuf, String),
+}
+
+struct PendingWrite {
+    tmp: NamedTempFile,
+    target: Target,
+}
+
+/// 进行中的分块写入。临时文件建在目标目录中，提交时同卷改名；记录被丢弃时临时文件随之删除，
+/// 页面重载和应用退出时全部丢弃，前端中途出错或重载不会留下临时文件
+#[derive(Default)]
+pub struct Writes(Mutex<(u32, HashMap<u32, PendingWrite>)>);
+
+impl Writes {
+    fn lock(&self) -> MutexGuard<'_, (u32, HashMap<u32, PendingWrite>)> {
+        self.0.lock().unwrap_or_else(|err| err.into_inner())
     }
-    Ok(())
+
+    /// 在 dir 中创建临时文件，返回前端凭以追加和提交的序号
+    fn begin(&self, dir: &Path, target: Target) -> io::Result<u32> {
+        let tmp = tempfile::Builder::new()
+            .prefix(".gpt-image-playground-")
+            .suffix(".tmp")
+            .tempfile_in(dir)?;
+        let mut guard = self.lock();
+        guard.0 = guard.0.wrapping_add(1);
+        let id = guard.0;
+        guard.1.insert(id, PendingWrite { tmp, target });
+        Ok(id)
+    }
+
+    /// 追加一块；写入失败时丢弃整个记录
+    fn write(&self, id: u32, bytes: &[u8]) -> Result<(), String> {
+        let mut guard = self.lock();
+        let pending = guard.1.get_mut(&id).ok_or(WRITE_GONE)?;
+        if let Err(err) = pending.tmp.write_all(bytes) {
+            guard.1.remove(&id);
+            return Err(format!("写入失败：{err}"));
+        }
+        Ok(())
+    }
+
+    /// 把临时文件改名为目标文件，返回实际写入的路径；失败时临时文件随之删除，用户原有的同名文件不受影响
+    fn commit(&self, id: u32) -> Result<PathBuf, String> {
+        let pending = self.lock().1.remove(&id).ok_or(WRITE_GONE)?;
+        match pending.target {
+            Target::Replace(path) => match pending.tmp.persist(&path) {
+                Ok(_) => Ok(path),
+                Err(err) => Err(format!("写入 {} 失败：{}", path.display(), err.error)),
+            },
+            Target::Unique(dir, name) => persist_unique(pending.tmp, &dir, &name)
+                .map_err(|err| format!("写入 {name} 失败：{err}")),
+        }
+    }
+
+    fn abort(&self, id: u32) {
+        self.lock().1.remove(&id);
+    }
+
+    /// 页面重载和应用退出时调用：丢弃全部未提交的写入，删除临时文件
+    pub fn clear(&self) {
+        self.lock().1.clear();
+    }
 }
 
-/// 先写入同目录的临时文件再改名覆盖，写入失败时用户原有的同名文件不受影响，临时文件随之自动删除
-fn replace_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new(".")))?;
-    tmp.write_all(bytes)?;
-    tmp.persist(path).map_err(|err| err.error)?;
-    Ok(())
-}
+const WRITE_GONE: &str = "保存已中断，请重试";
 
-/// 目录中已有同名文件时依次改用“名称 (2).扩展名”“名称 (3).扩展名”……，不覆盖用户已有的文件
-fn create_unique(dir: &Path, name: &str) -> io::Result<(File, PathBuf)> {
+/// 目录中已有同名文件时依次改用“名称 (2).扩展名”“名称 (3).扩展名”……，不覆盖用户已有的文件。
+/// 改名本身拒绝覆盖，挑选名称与写入之间不会被其他程序抢先
+fn persist_unique(mut tmp: NamedTempFile, dir: &Path, name: &str) -> io::Result<PathBuf> {
     let base = Path::new(name);
     let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or(name);
     let ext = base.extension().and_then(|s| s.to_str());
@@ -148,24 +201,24 @@ fn create_unique(dir: &Path, name: &str) -> io::Result<(File, PathBuf)> {
             (_, None) => format!("{stem} ({n})"),
         };
         let path = dir.join(candidate);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => return Ok((file, path)),
-            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(err),
+        match tmp.persist_noclobber(&path) {
+            Ok(_) => return Ok(path),
+            Err(err) if err.error.kind() == ErrorKind::AlreadyExists => tmp = err.file,
+            Err(err) => return Err(err.error),
         }
     }
     Err(io::Error::new(ErrorKind::AlreadyExists, "同名文件过多"))
 }
 
-/// 弹出保存对话框并写入所选路径；用户取消时返回 None。对话框自带覆盖确认
+/// 弹出保存对话框，在所选位置开始一次分块写入，返回写入序号；用户取消时返回 None。对话框自带覆盖确认
 #[tauri::command]
 pub async fn save_file(
     window: WebviewWindow,
     state: State<'_, StorageState>,
-    request: Request<'_>,
-) -> Result<Option<String>, String> {
-    let bytes = body(&request)?;
-    let name = file_name(&request)?;
+    writes: State<'_, Writes>,
+    name: String,
+) -> Result<Option<u32>, String> {
+    check_name(&name)?;
     let picked = tauri::async_runtime::spawn_blocking(move || {
         let ext = Path::new(&name)
             .extension()
@@ -188,13 +241,14 @@ pub async fn save_file(
         return Ok(None);
     };
     let data_dir = data_root(&state);
+    let dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
     tokio::task::block_in_place(|| {
-        check_outside(path.parent().unwrap_or(&path), data_dir.as_deref())
-    })?;
-    // 请求体借用自 IPC 消息，移入阻塞线程需再复制一份可能几百 MB 的数据，改用 block_in_place 原地写入
-    tokio::task::block_in_place(|| replace_file(&path, bytes))
-        .map_err(|err| format!("写入 {} 失败：{err}", path.display()))?;
-    Ok(Some(path.display().to_string()))
+        check_outside(&dir, data_dir.as_deref())?;
+        writes
+            .begin(&dir, Target::Replace(path))
+            .map_err(|err| format!("无法在 {} 中创建临时文件：{err}", dir.display()))
+    })
+    .map(Some)
 }
 
 fn pick_folder(window: WebviewWindow, start: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
@@ -207,7 +261,7 @@ fn pick_folder(window: WebviewWindow, start: Option<PathBuf>) -> Result<Option<P
     into_path(picked)
 }
 
-/// 记下目录供 save_dir_write 使用，返回前端凭以写入的序号；同一目录复用已有序号，列表不会随保存次数增长
+/// 记下目录供 save_dir_begin 使用，返回前端凭以写入的序号；同一目录复用已有序号，列表不会随保存次数增长
 fn register_dir(dirs: &SaveDirs, path: PathBuf) -> Result<SaveDir, String> {
     let mut list = dirs
         .0
@@ -226,7 +280,7 @@ fn register_dir(dirs: &SaveDirs, path: PathBuf) -> Result<SaveDir, String> {
     })
 }
 
-/// 弹出目录选择框，记下所选目录供 save_dir_write 使用；用户取消时返回 None
+/// 弹出目录选择框，记下所选目录供 save_dir_begin 使用；用户取消时返回 None
 #[tauri::command]
 pub async fn save_dir_pick(
     window: WebviewWindow,
@@ -244,24 +298,51 @@ pub async fn save_dir_pick(
     register_dir(&dirs, path).map(Some)
 }
 
-/// 把请求体写入 save_dir_pick 或 download_dir_use 登记的目录，已有同名文件时加序号，返回实际写入的完整路径
+/// 在 save_dir_pick 或 download_dir_use 登记的目录中开始一次分块写入，返回写入序号；
+/// 提交时已有同名文件则加序号
 #[tauri::command]
-pub async fn save_dir_write(
+pub async fn save_dir_begin(
     dirs: State<'_, SaveDirs>,
-    request: Request<'_>,
-) -> Result<String, String> {
-    let bytes = body(&request)?;
-    let name = file_name(&request)?;
-    let dir = header(&request, "x-token")
-        .parse::<usize>()
+    writes: State<'_, Writes>,
+    token: usize,
+    name: String,
+) -> Result<u32, String> {
+    check_name(&name)?;
+    let dir = dirs
+        .0
+        .lock()
         .ok()
-        .and_then(|token| dirs.0.lock().ok()?.get(token).cloned())
+        .and_then(|list| list.get(token).cloned())
         .ok_or_else(|| "保存目录无效".to_string())?;
-    let (file, path) =
-        create_unique(&dir, &name).map_err(|err| format!("创建 {name} 失败：{err}"))?;
-    tokio::task::block_in_place(|| write_to(file, &path, bytes))
-        .map_err(|err| format!("写入 {} 失败：{err}", path.display()))?;
-    Ok(path.display().to_string())
+    tokio::task::block_in_place(|| {
+        writes
+            .begin(&dir, Target::Unique(dir.clone(), name.clone()))
+            .map_err(|err| format!("创建 {name} 失败：{err}"))
+    })
+}
+
+/// 把请求体追加到写入序号（x-id 头）对应的临时文件
+#[tauri::command]
+pub async fn save_write(writes: State<'_, Writes>, request: Request<'_>) -> Result<(), String> {
+    let bytes = body(&request)?;
+    let id = header(&request, "x-id")
+        .parse::<u32>()
+        .map_err(|_| WRITE_GONE.to_string())?;
+    // 请求体借用自 IPC 消息，block_in_place 原地写入，不必再复制一份
+    tokio::task::block_in_place(|| writes.write(id, bytes))
+}
+
+/// 写完全部分块后调用，返回实际写入的完整路径
+#[tauri::command]
+pub async fn save_commit(writes: State<'_, Writes>, id: u32) -> Result<String, String> {
+    tokio::task::block_in_place(|| writes.commit(id)).map(|path| path.display().to_string())
+}
+
+/// 前端出错时调用，删除临时文件；序号不存在时什么也不做
+#[tauri::command]
+pub async fn save_abort(writes: State<'_, Writes>, id: u32) -> Result<(), String> {
+    tokio::task::block_in_place(|| writes.abort(id));
+    Ok(())
 }
 
 const DOWNLOAD_DIR_KEY: &str = "download_dir";
@@ -343,7 +424,7 @@ pub async fn download_dir_pick(
     Ok(Some(path.display().to_string()))
 }
 
-/// “默认地址”模式下保存前调用：确认默认保存地址可写，并像 save_dir_pick 一样登记，之后用 save_dir_write 写入
+/// “默认地址”模式下保存前调用：确认默认保存地址可写，并像 save_dir_pick 一样登记，之后用 save_dir_begin 写入
 #[tauri::command]
 pub async fn download_dir_use(
     state: State<'_, StorageState>,
@@ -415,15 +496,70 @@ mod tests {
         }
     }
 
+    fn entries(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
     #[test]
-    fn replace_file_overwrites_existing() {
+    fn chunked_write_replaces_existing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.zip");
         fs::write(&path, b"old").unwrap();
-        replace_file(&path, b"new").unwrap();
+        let writes = Writes::default();
+        let id = writes
+            .begin(dir.path(), Target::Replace(path.clone()))
+            .unwrap();
+        writes.write(id, b"ne").unwrap();
+        // 提交前原有文件不变，临时文件在同一目录中
+        assert_eq!(fs::read(&path).unwrap(), b"old");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        writes.write(id, b"w").unwrap();
+        assert_eq!(writes.commit(id).unwrap(), path);
         assert_eq!(fs::read(&path).unwrap(), b"new");
-        // 临时文件已改名为目标文件，目录中不留残余
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert_eq!(entries(dir.path()), ["a.zip"]);
+        // 提交后序号失效
+        assert_eq!(writes.write(id, b"x").unwrap_err(), WRITE_GONE);
+        assert_eq!(writes.commit(id).unwrap_err(), WRITE_GONE);
+    }
+
+    #[test]
+    fn abort_and_clear_remove_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let writes = Writes::default();
+        let target = || Target::Unique(dir.path().to_path_buf(), "a.zip".into());
+        let a = writes.begin(dir.path(), target()).unwrap();
+        let b = writes.begin(dir.path(), target()).unwrap();
+        let c = writes.begin(dir.path(), target()).unwrap();
+        assert_ne!(a, b);
+        writes.write(a, b"x").unwrap();
+        writes.abort(a);
+        writes.abort(a);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        writes.clear();
+        assert!(entries(dir.path()).is_empty());
+        assert_eq!(writes.commit(b).unwrap_err(), WRITE_GONE);
+        assert_eq!(writes.write(c, b"x").unwrap_err(), WRITE_GONE);
+    }
+
+    #[test]
+    fn commit_failure_keeps_target_and_removes_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        // 目标路径被目录占用，改名失败
+        let path = dir.path().join("a.zip");
+        fs::create_dir(&path).unwrap();
+        let writes = Writes::default();
+        let id = writes
+            .begin(dir.path(), Target::Replace(path.clone()))
+            .unwrap();
+        writes.write(id, b"x").unwrap();
+        assert!(writes.commit(id).is_err());
+        assert!(path.is_dir());
+        assert_eq!(entries(dir.path()), ["a.zip"]);
     }
 
     #[test]
@@ -509,17 +645,21 @@ mod tests {
     #[test]
     fn numbers_duplicate_names() {
         let dir = tempfile::tempdir().unwrap();
-        let names: Vec<_> = (0..3)
-            .map(|_| {
-                let (file, path) = create_unique(dir.path(), "a.zip").unwrap();
-                write_to(file, &path, b"x").unwrap();
-                path.file_name().unwrap().to_string_lossy().into_owned()
-            })
-            .collect();
+        let writes = Writes::default();
+        let save = |name: &str, bytes: &[u8]| {
+            let target = Target::Unique(dir.path().to_path_buf(), name.into());
+            let id = writes.begin(dir.path(), target).unwrap();
+            writes.write(id, bytes).unwrap();
+            let path = writes.commit(id).unwrap();
+            path.file_name().unwrap().to_string_lossy().into_owned()
+        };
+        let names: Vec<_> = (0..3u8).map(|i| save("a.zip", &[i])).collect();
         assert_eq!(names, ["a.zip", "a (2).zip", "a (3).zip"]);
-        let (_, path) = create_unique(dir.path(), "noext").unwrap();
-        assert_eq!(path.file_name().unwrap(), "noext");
-        let (_, path) = create_unique(dir.path(), "noext").unwrap();
-        assert_eq!(path.file_name().unwrap(), "noext (2)");
+        // 已有文件不被覆盖
+        assert_eq!(fs::read(dir.path().join("a.zip")).unwrap(), [0]);
+        assert_eq!(fs::read(dir.path().join("a (3).zip")).unwrap(), [2]);
+        assert_eq!(save("noext", b""), "noext");
+        assert_eq!(save("noext", b""), "noext (2)");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 5);
     }
 }

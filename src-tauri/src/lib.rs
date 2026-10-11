@@ -57,7 +57,10 @@ pub fn run() {
             diagnostics::log_open_dir,
             files::save_file,
             files::save_dir_pick,
-            files::save_dir_write,
+            files::save_dir_begin,
+            files::save_write,
+            files::save_commit,
+            files::save_abort,
             files::download_dir_get,
             files::download_dir_pick,
             files::download_dir_use,
@@ -71,11 +74,13 @@ pub fn run() {
             update::update_discard,
         ])
         .manage(files::SaveDirs::default())
+        .manage(files::Writes::default())
         .manage(http::Requests::default())
-        // 页面重载（含开发时的热重载）后旧页面的请求已无人读取，立即断开
+        // 页面重载（含开发时的热重载）后旧页面的请求已无人读取，立即断开；未提交的保存也无人继续，删除临时文件
         .on_page_load(|webview, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 webview.state::<http::Requests>().clear();
+                webview.state::<files::Writes>().clear();
             }
         })
         .setup(|app| {
@@ -136,6 +141,12 @@ pub fn run() {
             };
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("启动应用失败")
+        // 退出时不会析构托管状态，保存中途关闭窗口需在此删除临时文件
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<files::Writes>().clear();
+            }
+        })
 }

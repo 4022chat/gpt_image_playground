@@ -25,8 +25,28 @@ function triggerDownload(blob: Blob, fileName: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-// 以二进制请求体传给 Rust，避免几百 MB 的数据经过 base64 或 JSON 数组
-const toBytes = async (data: Blob | Uint8Array) => data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data
+// 整个文件作为一次 IPC 请求体时，WebView2 浏览器进程会为 260 MB 的分卷短暂占用 3~5 GB 内存，改为分块传输
+const CHUNK_SIZE = 8 * 1024 * 1024
+
+/**
+ * 把内容分块写入 Rust 侧在目标目录中打开的临时文件，全部写完后提交（改名为目标文件），返回实际写入的完整路径。
+ * 任一步失败时丢弃临时文件，不留下写了一半的文件
+ */
+async function writeInChunks(id: number, data: Blob | Uint8Array) {
+  try {
+    const size = data instanceof Blob ? data.size : data.byteLength
+    for (let offset = 0; offset < size; offset += CHUNK_SIZE) {
+      const chunk = data instanceof Blob
+        ? new Uint8Array(await data.slice(offset, offset + CHUNK_SIZE).arrayBuffer())
+        : data.subarray(offset, offset + CHUNK_SIZE)
+      await invoke('save_write', chunk, { headers: { 'x-id': String(id) } })
+    }
+    return await invoke<string>('save_commit', { id })
+  } catch (err) {
+    await invoke('save_abort', { id }).catch((abortErr) => console.warn('丢弃临时文件失败', abortErr))
+    throw err
+  }
+}
 
 /**
  * 保存单个文件：网页版触发浏览器下载；客户端弹出系统保存对话框，由 Rust 写入所选路径，
@@ -39,7 +59,9 @@ export async function saveFile(data: Blob | Uint8Array, fileName: string): Promi
     return fileName
   }
   if (saveToDefaultDir) return await saveFileToDir(await invoke<SaveDir>('download_dir_use'), data, fileName)
-  return await invoke<string | null>('save_file', await toBytes(data), { headers: { 'x-name': encodeURIComponent(fileName) } })
+  const id = await invoke<number | null>('save_file', { name: fileName })
+  if (id === null) return null
+  return await writeInChunks(id, data)
 }
 
 /**
@@ -52,9 +74,7 @@ export function pickSaveDir() {
 
 /** 仅客户端：写入 pickSaveDir 选定的目录，已有同名文件时自动加序号，返回实际写入的完整路径 */
 export async function saveFileToDir(dir: SaveDir, data: Blob | Uint8Array, fileName: string) {
-  return await invoke<string>('save_dir_write', await toBytes(data), {
-    headers: { 'x-name': encodeURIComponent(fileName), 'x-token': String(dir.token) },
-  })
+  return await writeInChunks(await invoke<number>('save_dir_begin', { token: dir.token, name: fileName }), data)
 }
 
 /** 仅客户端：默认保存地址，用于在设置中显示 */

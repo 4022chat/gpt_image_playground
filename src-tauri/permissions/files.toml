@@ -1,10 +1,13 @@
 [[permission]]
 identifier = "files"
-description = "允许主窗口弹出保存对话框或目录选择框并写入用户所选的位置，读取、更改（仅经目录选择框）、使用和打开默认保存地址"
+description = "允许主窗口弹出保存对话框或目录选择框并分块写入用户所选的位置，读取、更改（仅经目录选择框）、使用和打开默认保存地址"
 commands.allow = [
   "save_file",
   "save_dir_pick",
-  "save_dir_write",
+  "save_dir_begin",
+  "save_write",
+  "save_commit",
+  "save_abort",
   "download_dir_get",
   "download_dir_pick",
   "download_dir_use",

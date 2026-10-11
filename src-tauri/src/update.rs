@@ -11,10 +11,10 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_updater::{Error, Update, UpdaterExt};
 
-use crate::storage;
+use crate::{files, storage};
 
 const META_FILE: &str = "update.json";
 const PACKAGE_FILE: &str = "update.bin";
@@ -279,6 +279,8 @@ pub async fn update_install<R: Runtime>(app: AppHandle<R>) -> Result<(), String>
             update
         }
     };
+    // Windows 上插件启动安装程序后直接 process::exit，不会触发 RunEvent::Exit，需先删除未提交保存的临时文件
+    app.state::<files::Writes>().clear();
     update
         .install(bytes)
         .map_err(|err| format!("安装更新失败：{err}"))?;
