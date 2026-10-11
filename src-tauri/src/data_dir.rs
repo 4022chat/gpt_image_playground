@@ -29,17 +29,14 @@ const LOCK: &str = "data-dir.lock";
 
 const NETWORK: &str = "不支持网络位置。";
 const ROOT: &str = "不能使用磁盘根目录。";
-const PROTECTED: &str = "不能使用用户主目录、系统应用数据目录（AppData）或它们的上级目录。";
-const KNOWN: &str =
-    "不能直接使用下载、图片、文档等系统文件夹或它们的上级目录，可以在其中新建一个子文件夹。";
-const SYSTEM: &str =
-    "不能使用 Windows、Program Files、ProgramData、临时文件夹等系统位置或其中的文件夹。";
-const CLOUD: &str = "不能使用 OneDrive 等云同步文件夹，同步可能损坏数据库。";
-const IN_INSTALL: &str =
-    "不能使用安装目录或其中的文件夹（安装目录下的 data 除外），卸载或更新时可能被删除。";
+const PROTECTED: &str = "不能使用用户文件夹或 AppData。";
+const KNOWN: &str = "不能直接使用下载、图片、文档等系统文件夹，可以在里面新建一个。";
+const SYSTEM: &str = "不能使用 Windows、Program Files 等系统位置。";
+const CLOUD: &str = "不能使用 OneDrive 等云同步文件夹。";
+const IN_INSTALL: &str = "不能使用安装目录，卸载时可能被删除。";
 const SAME: &str = "与当前数据目录相同。";
-const NESTED: &str = "新目录与当前数据目录存在包含关系（其中一个位于另一个之中）。";
-const NOT_EMPTY: &str = "请选择一个空文件夹，或新建一个。";
+const NESTED: &str = "不能与当前数据目录互相包含。";
+const NOT_EMPTY: &str = "请选择一个空文件夹。";
 const CANCELLED: &str = "已取消";
 
 /// Progress::cancel 的取值：0 进行中，1 已取消，2 已开始切换、不能再取消
@@ -395,7 +392,7 @@ fn target_block(to: &Path, current: &Path, base: &Path, dirs: &SystemDirs) -> Op
 fn check_target(to: &Path, current: &Path, base: &Path, dirs: &SystemDirs) -> Result<(), String> {
     let real = files::normalize(to);
     if !to.is_absolute() || real.components().any(|c| c == Component::ParentDir) {
-        return Err("请选择完整的文件夹路径。".into());
+        return Err("请选择一个文件夹。".into());
     }
     if is_network(to) {
         return Err(NETWORK.into());
@@ -405,7 +402,7 @@ fn check_target(to: &Path, current: &Path, base: &Path, dirs: &SystemDirs) -> Re
         return Err(reason.into());
     }
     if to.exists() && !to.is_dir() {
-        return Err("所选路径不是文件夹。".into());
+        return Err("请选择一个文件夹。".into());
     }
     match fs::read_dir(to).map(|mut entries| entries.next().is_none()) {
         Ok(true) => Ok(()),
@@ -579,9 +576,10 @@ fn discard(to: &Path, created: &[PathBuf]) -> Option<String> {
     for dir in created.iter().skip(1) {
         let _ = fs::remove_dir(dir);
     }
-    result
-        .err()
-        .map(|err| format!("新目录中复制了一半的文件未能删除（{err}），可以手动删除。"))
+    result.err().map(|err| {
+        log::warn!("新目录中未复制完的文件未能删除：{err}");
+        "新目录中有未复制完的文件，可以删除。".to_string()
+    })
 }
 
 /// 迁移失败：reason 为 None 表示用户取消；leftover 为新目录中未能删除的副本的说明
@@ -634,7 +632,7 @@ fn copy_verified(
     let result = from.canonicalize().and_then(|src| {
         copy_tree(&src, &to.canonicalize()?, progress)?;
         if migrate::dir_stats(to, false) != stats {
-            return Err(io::Error::other("复制后的文件数或总大小与原目录不一致"));
+            return Err(io::Error::other("复制结果与原目录不一致"));
         }
         Ok(())
     });
@@ -669,9 +667,7 @@ fn change(
         let failure = Failure::new(format!("无法写入数据目录设置：{err}"));
         return Err(failure.discarding(to, &created));
     }
-    Ok(fs::remove_dir_all(from)
-        .err()
-        .map(|err| format!("原因：{err}。可以手动删除原目录。")))
+    Ok(fs::remove_dir_all(from).err().map(|err| err.to_string()))
 }
 
 /// 等待发起更改的旧进程退出，以及 WebView2 的浏览器进程释放 lockfile（它们在主程序退出后才陆续退出）
@@ -703,7 +699,8 @@ fn wait_previous(pid: Option<u32>, from: &Path, progress: &Progress) -> Result<(
             return Err(Failure::cancelled());
         }
         if !exited {
-            return Err(Failure::new("原来的客户端进程 30 秒内没有退出"));
+            log::warn!("原来的客户端进程 30 秒内没有退出");
+            return Err(Failure::new("客户端未能及时退出"));
         }
     }
     let lockfile = from.join("webview").join("EBWebView").join("lockfile");
@@ -723,7 +720,8 @@ fn wait_previous(pid: Option<u32>, from: &Path, progress: &Progress) -> Result<(
             _ => return Ok(()),
         }
     }
-    Err(Failure::new("WebView2 15 秒内没有释放原数据目录"))
+    log::warn!("WebView2 15 秒内没有释放原数据目录");
+    Err(Failure::new("原数据目录仍被占用"))
 }
 
 #[cfg(not(windows))]
@@ -761,21 +759,15 @@ fn with_progress(
 fn run_pending(base: &Path, current: &Path) -> (PathBuf, Option<Notice>) {
     let failed = |failure: Failure, to: &Path| {
         let (title, mut details) = match failure.reason {
-            None => ("已取消更改数据目录", vec![]),
-            Some(reason) => ("更改数据目录失败", vec![format!("原因：{reason}")]),
+            None => ("已取消", vec![]),
+            Some(reason) => ("更改失败", vec![format!("原因：{reason}")]),
         };
         details.extend(failure.leftover);
         let mut rows = vec![("原目录", current)];
         if !to.as_os_str().is_empty() {
             rows.push(("新目录", to));
         }
-        let notice = notice(
-            "warning",
-            title,
-            "数据仍在原目录，没有变化。",
-            &rows,
-            details,
-        );
+        let notice = notice("warning", title, "数据仍在原目录。", &rows, details);
         (current.to_path_buf(), notice)
     };
     let (pending, running) = (base.join(PENDING), base.join(RUNNING));
@@ -813,17 +805,17 @@ fn run_pending(base: &Path, current: &Path) -> (PathBuf, Option<Notice>) {
     let _ = fs::remove_file(&running);
     match result {
         Ok(None) => {
-            let message = format!("数据目录已更改为 {}", to.display());
-            let notice = notice("success", "数据目录已更改", &message, &[], vec![]);
+            let notice = notice("success", "数据目录已更改", "数据目录已更改", &[], vec![]);
             (to, notice)
         }
         Ok(Some(detail)) => {
+            log::warn!("原数据目录未能完全删除：{detail}");
             let notice = notice(
                 "warning",
                 "数据目录已更改",
-                "数据已复制到新目录，但原目录未能完全删除。",
+                "原目录未能清理完成，可以手动删除。",
                 &[("新目录", &to), ("原目录", &from)],
-                vec![detail],
+                vec![],
             );
             (to, notice)
         }
@@ -850,9 +842,9 @@ fn interrupted(
         return notice(
             "warning",
             title,
-            "客户端在更改过程中意外退出，无法确定是否已完成。",
+            "无法确定是否已完成，请检查两个目录后再删除。",
             &rows,
-            vec!["请检查两个目录中的数据后，再决定是否删除。".into()],
+            vec![],
         );
     };
     let written = match raw {
@@ -863,9 +855,9 @@ fn interrupted(
         return notice(
             "warning",
             title,
-            "客户端在复制过程中意外退出，数据仍在原目录。",
+            "数据仍在原目录，新目录可以删除。",
             &rows,
-            vec!["新目录中可能有复制了一半的文件，可以删除。".into()],
+            vec![],
         );
     }
     // 已写好：本次实际用上了指向文件记录的目录，才能提示原目录可以删除（唯一的入口）
@@ -877,17 +869,17 @@ fn interrupted(
         return notice(
             "warning",
             "数据目录已更改",
-            "客户端在更改过程中意外退出，但数据已复制完成，现在使用新目录。",
+            "已切换到新目录，原目录可以删除。",
             &rows,
-            vec!["原目录可能还在，可以手动删除。".into()],
+            vec![],
         );
     }
     notice(
         "warning",
         title,
-        "客户端在更改过程中意外退出。数据已复制到新目录，但该目录现在无法使用。",
+        "数据已复制到新目录，但新目录现在无法访问。请勿删除原目录。",
         &rows,
-        vec!["原目录可能还在，请先不要删除。".into()],
+        vec![],
     )
 }
 
@@ -947,7 +939,7 @@ fn startup(
                     notices.extend(notice(
                         "warning",
                         "已改用默认数据目录",
-                        "原数据目录中的数据仍在原处，不会自动带回来。",
+                        "原目录中的数据不会被转移。",
                         &rows,
                         vec![],
                     ));
@@ -957,9 +949,14 @@ fn startup(
                     notices.extend(notice(
                         "warning",
                         "本次使用默认数据目录",
-                        "原数据目录无法使用，也无法弹出对话框询问，本次先使用默认目录。",
+                        match problem {
+                            Problem::Missing(_) => {
+                                "找不到原数据目录，本次使用默认目录。重新连接后重启即可恢复。"
+                            }
+                            Problem::Invalid { .. } => "原数据目录设置无效，本次使用默认目录。",
+                        },
                         &rows,
-                        vec!["连接存储设备后重启客户端即可恢复；也可以在“设置 → 数据管理”中重新更改数据目录。".into()],
+                        vec![],
                     ));
                     break default.clone();
                 }
@@ -978,8 +975,8 @@ fn startup(
             let _ = fs::remove_file(base.join(PENDING));
             notices.extend(notice(
                 "warning",
-                "更改数据目录失败",
-                "数据仍在原目录，没有变化。",
+                "更改失败",
+                "数据仍在原目录。",
                 &[("原目录", &dir)],
                 vec![format!("原因：无法在安装目录中创建锁文件（{err}）")],
             ));
@@ -1272,7 +1269,7 @@ mod dialog {
         let title = wide(TITLE);
         let heading = wide("正在更改数据目录");
         let content = wide("正在准备…");
-        let footer = wide("完成后会自动打开客户端。");
+        let footer = wide("完成后自动打开。");
         let config = TASKDIALOGCONFIG {
             cbSize: size_of::<TASKDIALOGCONFIG>() as u32,
             dwFlags: TDF_SHOW_PROGRESS_BAR | TDF_CALLBACK_TIMER,
@@ -1346,7 +1343,7 @@ mod dialog {
         let (heading, content, footer) = match problem {
             Problem::Missing(dir) => (
                 "找不到数据目录",
-                "可能是存储设备未连接，连接后点“重试”。".to_string(),
+                "存储设备可能未连接。".to_string(),
                 format!("数据目录：{}", dir.display()),
             ),
             Problem::Invalid {
@@ -1389,7 +1386,7 @@ mod dialog {
                     };
                     let confirm = choose(
                         "改用默认目录？",
-                        "原来数据目录中的数据会留在原处，不会自动带回来。",
+                        "原目录中的数据不会被转移。",
                         &footer,
                         &["改用默认目录", "返回"],
                     );
@@ -1581,7 +1578,7 @@ mod tests {
         );
         assert_eq!(
             check_target(&new.join("a.txt"), &data, base, &none()).unwrap_err(),
-            "所选路径不是文件夹。"
+            "请选择一个文件夹。"
         );
         assert!(check_target(Path::new("relative"), &data, base, &none()).is_err());
         assert_eq!(check_target(&data, &data, base, &none()).unwrap_err(), SAME);
@@ -1853,7 +1850,7 @@ mod tests {
         let (dir, notices) = startup(base, &none(), &mut never);
         let notice = notices.into_iter().last();
         assert_eq!(dir, new);
-        assert!(all_text(&notice.unwrap()).contains("已复制完成"));
+        assert!(all_text(&notice.unwrap()).contains("已切换到新目录"));
         assert!(data.join("data.db").exists());
         assert!(!base.join(RUNNING).exists() && !base.join(LOCK).exists());
 
@@ -1879,7 +1876,7 @@ mod tests {
         assert!(!base.join(POINTER).exists());
         let msg = all_text(&notice.unwrap());
         assert!(
-            msg.contains("无法使用") && !msg.contains("可以删除"),
+            msg.contains("无法访问") && !msg.contains("可以删除"),
             "{msg}"
         );
     }
@@ -1897,17 +1894,17 @@ mod tests {
         let marker = "D:\\GIP 数据\nE:\\GIP 数据\n1\nE:\\GIP 数据";
         let msg = interrupted_text(base, r"D:\GIP 数据", Some(r"D:\GIP 数据"), marker);
         assert!(
-            msg.contains("数据仍在原目录") && !msg.contains("已复制完成"),
+            msg.contains("数据仍在原目录") && !msg.contains("已切换到新目录"),
             "{msg}"
         );
         let msg = interrupted_text(base, r"E:\GIP 数据", Some(r"E:\GIP 数据"), marker);
-        assert!(msg.contains("已复制完成"), "{msg}");
+        assert!(msg.contains("已切换到新目录"), "{msg}");
 
         // 同名换盘，原目录与安装目录同盘、指向文件省略盘符，复制中途崩溃
         let base = Path::new(r"D:\Apps\GIP");
         let msg = interrupted_text(base, r"D:\GIP 数据", Some(r"\GIP 数据"), marker);
         assert!(
-            msg.contains("数据仍在原目录") && !msg.contains("已复制完成"),
+            msg.contains("数据仍在原目录") && !msg.contains("已切换到新目录"),
             "{msg}"
         );
 
@@ -1915,11 +1912,11 @@ mod tests {
         let marker = "E:\\old\nE:\\GIP 数据\n1\n\\GIP 数据";
         let base = Path::new(r"F:\Apps\GIP");
         let msg = interrupted_text(base, r"F:\GIP 数据", Some(r"\GIP 数据"), marker);
-        assert!(msg.contains("已复制完成"), "{msg}");
+        assert!(msg.contains("已切换到新目录"), "{msg}");
         // 已写好但这次没用上新目录（例如选了改用默认目录）：不能提示删除原目录
         let msg = interrupted_text(base, r"F:\Apps\GIP\data", Some(r"\GIP 数据"), marker);
         assert!(
-            msg.contains("无法使用") && !msg.contains("可以手动删除"),
+            msg.contains("无法访问") && !msg.contains("可以删除"),
             "{msg}"
         );
 
@@ -1927,7 +1924,7 @@ mod tests {
         let default = default_dir(base).display().to_string();
         let marker = "F:\\old\n".to_string() + &default + "\n1\n";
         let msg = interrupted_text(base, &default, None, &marker);
-        assert!(msg.contains("已复制完成"), "{msg}");
+        assert!(msg.contains("已切换到新目录"), "{msg}");
         let msg = interrupted_text(base, r"F:\old", Some(r"\old"), &marker);
         assert!(msg.contains("数据仍在原目录"), "{msg}");
 

@@ -59,18 +59,18 @@ function IssueList({ title, items }: { title: string, items: MoveIssue[] }) {
 function showResult(report: MoveReport) {
   const store = useStore.getState()
   if (!report.failed.length && !report.notRemoved.length) {
-    store.showToast(`已将 ${report.moved} 项移动到新地址${report.renamed ? `，其中 ${report.renamed} 项因重名自动改名` : ''}`, 'success')
+    store.showToast(`已移动 ${report.moved} 项${report.renamed ? `，其中 ${report.renamed} 项因重名改了名` : ''}`, 'success')
     return
   }
   const content: ReactNode = (
     <div className="space-y-3">
-      {report.failed.length > 0 && <IssueList title={`未能移动，仍在原地址（${report.failed.length} 项）`} items={report.failed} />}
-      {report.notRemoved.length > 0 && <IssueList title={`已复制到新地址，但原位置未能删除（${report.notRemoved.length} 项）`} items={report.notRemoved} />}
+      {report.failed.length > 0 && <IssueList title={`未移动（${report.failed.length} 项）`} items={report.failed} />}
+      {report.notRemoved.length > 0 && <IssueList title={`已复制，原文件未删除（${report.notRemoved.length} 项）`} items={report.notRemoved} />}
     </div>
   )
   store.setConfirmDialog({
-    title: '迁移未全部完成',
-    message: `已将 ${report.moved} 项移动到新地址，以下内容需要处理。可关闭占用它们的程序后手动移动或删除。`,
+    title: '部分文件未移动',
+    message: `已移动 ${report.moved} 项。下面这些文件可能被其他程序占用，关闭后可手动处理。`,
     content,
     confirmText: '我知道了',
     showCancel: false,
@@ -86,8 +86,8 @@ export async function changeSaveDirWithMigration() {
   const store = useStore.getState()
   if (prev.blocked) {
     store.setConfirmDialog({
-      title: '无法迁移原有文件',
-      message: `默认保存地址已更改，原有文件保持不动。\n${prev.blocked}。`,
+      title: '原文件未移动',
+      message: `默认保存地址已更改，原地址中的文件保持不动。\n${prev.blocked}`,
       content: <PathBox rows={[['原地址', prev.path], ['新地址', change.path]]} />,
       confirmText: '我知道了',
       showCancel: false,
@@ -96,13 +96,13 @@ export async function changeSaveDirWithMigration() {
   }
   store.setConfirmDialog({
     title: '迁移原有文件',
-    message: `默认保存地址已更改。原地址中有 **${prev.files}** 个文件（${formatBytes(prev.bytes)}），是否一并移动到新地址？`,
+    message: `原地址中还有 **${prev.files}** 个文件（${formatBytes(prev.bytes)}），要一起移到新地址吗？`,
     content: (
       <div className="space-y-3">
         <PathBox rows={[['原地址', prev.path], ['新地址', change.path]]} />
         <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-          <span className="font-medium text-amber-600 dark:text-amber-400">将移动该文件夹中的全部内容</span>
-          ，包括子文件夹以及与本应用无关的文件。同名文件自动加序号，不覆盖新地址中已有的文件；{prev.keepSource ? '原文件夹本身会保留。' : '原文件夹移空后会被删除。'}
+          <span className="font-medium text-amber-600 dark:text-amber-400">文件夹里的所有内容都会移走</span>
+          ，包括与本应用无关的文件。重名的自动加序号，{prev.keepSource ? '原文件夹会保留。' : '原文件夹移空后删除。'}
         </p>
       </div>
     ),

@@ -2644,7 +2644,7 @@ describe('data import', () => {
 
     expect(await importing).toBe(false)
     expect(await getAllTasks()).toEqual([])
-    expect(useStore.getState().showToast).toHaveBeenCalledWith('已取消导入，未写入任何数据', 'info')
+    expect(useStore.getState().showToast).toHaveBeenCalledWith('已取消导入', 'info')
     expect(useDataProgress.getState().progress).toBeNull()
   })
 

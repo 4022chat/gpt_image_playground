@@ -199,7 +199,7 @@ export function getExportZipPlan(
     addItem(conversationBytes[index], '单条任务或 Agent 对话超过 2 GB，无法生成备份。', (part) => part.agentConversations.push(plannedConversations[index]))
   }
   for (const image of plannedImages) {
-    addItem(image.bytes, `图片 ${image.id} 过大，无法放入小于 2 GB 的备份分片。`, (part) => part.imageIds.push(image.id))
+    addItem(image.bytes, `图片 ${image.id} 过大，无法放入小于 2 GB 的备份分卷。`, (part) => part.imageIds.push(image.id))
   }
   return parts
 }

@@ -55,7 +55,7 @@ export default function DataProgressDialog() {
         </div>
         <p className="mt-2 min-h-[1rem] text-xs tabular-nums text-gray-400 dark:text-gray-500">{count}</p>
         {progress.mode === 'import' && !progress.cancelable && (
-          <p className="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">正在写入数据，请勿关闭{isTauri ? '应用' : '页面'}。</p>
+          <p className="mt-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400">正在写入，请勿关闭{isTauri ? '应用' : '页面'}。</p>
         )}
         {progress.cancelable && (
           <button

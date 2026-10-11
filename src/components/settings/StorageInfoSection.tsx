@@ -60,7 +60,7 @@ export default function StorageInfoSection() {
         <div className="space-y-3">
           <PathBox rows={[['原目录', change.from], ['新目录', change.to]]} />
           <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-            重启后会切换到新目录并删除原目录。正在进行的生成任务会中断。
+            完成后会删除原目录。正在生成的任务会中断。
           </p>
         </div>
       ),

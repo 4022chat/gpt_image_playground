@@ -4516,7 +4516,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
   let savedParts = 0
   try {
     const state = useStore.getState()
-    if (options.exportTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('当前有任务正在进行，请完成或停止后再导出。')
+    if (options.exportTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('有任务正在进行，完成或停止后再导出。')
     const tasks = options.exportTasks ? await getAllTasks() : []
     const imageIds = options.exportTasks ? await getAllImageIds() : []
     const { settings, agentConversations, favoriteCollections, defaultFavoriteCollectionId } = state
@@ -4549,7 +4549,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
 
     for (let index = 0; index < plan.length; index++) {
       const partNumber = index + 1
-      const partLabel = plan.length > 1 ? `（第 ${partNumber} / ${plan.length} 个分片）` : ''
+      const partLabel = plan.length > 1 ? `（第 ${partNumber} / ${plan.length} 卷）` : ''
       throwIfAborted(signal)
       const { images, thumbnailsByImageId } = await readExportImages(plan[index].imageIds, (done) => {
         throwIfAborted(signal)
@@ -4587,16 +4587,16 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     }
     const msg = dir
       ? `已导出 ${plan.length} 个 ZIP 到 ${dir.path}`
-      : plan.length > 1 ? `已请求下载 ${plan.length} 个 ZIP，请确认浏览器已允许多文件下载` : isTauri ? `数据已导出到 ${savedPath}` : '数据已导出'
+      : plan.length > 1 ? `正在下载 ${plan.length} 个 ZIP，如被浏览器拦截，请允许多文件下载` : isTauri ? `已导出到 ${savedPath}` : '数据已导出'
     useStore.getState().showToast(msg, 'success')
   } catch (e) {
     if (signal.aborted) {
-      useStore.getState().showToast(savedParts ? `已取消导出，已${isTauri ? '保存' : '下载'}的 ${savedParts} 个分片不是完整备份，可以删除` : '已取消导出', 'info')
+      useStore.getState().showToast(savedParts ? `已取消导出，已${isTauri ? '保存' : '下载'}的 ${savedParts} 个分卷不完整，可以删除` : '已取消导出', 'info')
       return
     }
     console.error('exportData failed', e)
     const detail = e instanceof Error ? e.message.trim() : String(e).trim()
-    useStore.getState().showToast(detail ? `导出失败，${detail}` : '导出失败，未知错误', 'error')
+    useStore.getState().showToast(detail ? `导出失败，${detail}` : '导出失败', 'error')
   } finally {
     endDataProgress()
   }
@@ -4629,11 +4629,11 @@ export async function importData(input: File | File[], options: ImportOptions = 
   const signal = startDataProgress('import', true)
   try {
     const state = useStore.getState()
-    if (options.importTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('当前有任务正在进行，请完成或停止后再导入。')
+    if (options.importTasks && hasActiveDataOperations(state.tasks, state.agentConversations)) throw new Error('有任务正在进行，完成或停止后再导入。')
     const files = Array.isArray(input) ? input : [input]
     if (!files.length) throw new Error('没有选择备份文件。')
     if (files.some((file) => file.size >= MAX_EXPORT_ZIP_BYTES)) {
-      throw new Error('单个 ZIP 不能达到或超过 2 GB，请选择分片备份。')
+      throw new Error('单个 ZIP 不能超过 2 GB，请使用分卷备份。')
     }
 
     const selected = [] as Array<{ file: File; manifest: Awaited<ReturnType<typeof readExportZipManifest>> }>
@@ -4645,22 +4645,22 @@ export async function importData(input: File | File[], options: ImportOptions = 
     }
     const multipart = selected.some((part) => part.manifest.backupPart != null)
     if (multipart) {
-      if (selected.some((part) => !part.manifest.backupPart)) throw new Error('不能混合选择分片备份和普通备份。')
+      if (selected.some((part) => !part.manifest.backupPart)) throw new Error('不能同时选择分卷备份和普通备份。')
       const first = selected[0].manifest.backupPart!
       const indexes = new Set(selected.map((part) => part.manifest.backupPart!.index))
       const validSet = selected.every((part) => {
         const backupPart = part.manifest.backupPart!
         return backupPart.id === first.id && backupPart.total === first.total && backupPart.index >= 1 && backupPart.index <= first.total
       })
-      if (!validSet || indexes.size !== selected.length) throw new Error('所选分片不属于同一批备份或包含重复分片。')
+      if (!validSet || indexes.size !== selected.length) throw new Error('所选分卷不属于同一份备份，或有重复。')
       if (options.importTasks && (selected.length !== first.total || indexes.size !== first.total)) {
-        throw new Error(`分片备份不完整，请一次选择同一备份的全部 ${first.total} 个 ZIP。`)
+        throw new Error(`分卷不全，请一次选择全部 ${first.total} 个 ZIP。`)
       }
       selected.sort((a, b) => a.manifest.backupPart!.index - b.manifest.backupPart!.index)
     }
 
     const settingsManifests = selected.filter((part) => part.manifest.settings)
-    if (options.importConfig && !options.importTasks && !settingsManifests.length) throw new Error('所选备份不包含配置数据。')
+    if (options.importConfig && !options.importTasks && !settingsManifests.length) throw new Error('这份备份里没有配置。')
     const importedTasks = selected.flatMap((part) => part.manifest.tasks ?? [])
     const importedAgentConversations = selected.flatMap((part) => part.manifest.agentConversations ?? [])
     const hasTaskData = selected.some((part) => part.manifest.tasks != null || part.manifest.imageFiles != null)
@@ -4779,23 +4779,23 @@ export async function importData(input: File | File[], options: ImportOptions = 
       current.setSettings(settings)
     }
 
-    let msg = '数据已成功导入'
+    let msg = '导入完成'
     if (options.importTasks && hasTaskData) {
       msg = `已导入 ${importedTasks.length} 个任务`
     } else if (options.importConfig && settingsManifests.length) {
-      msg = '配置已成功导入'
+      msg = '配置已导入'
     }
 
     useStore.getState().showToast(msg, 'success')
     return true
   } catch (e) {
     if (signal.aborted) {
-      useStore.getState().showToast('已取消导入，未写入任何数据', 'info')
+      useStore.getState().showToast('已取消导入', 'info')
       return false
     }
     console.error('importData failed', e)
     const detail = e instanceof Error ? e.message.trim() : String(e).trim()
-    useStore.getState().showToast(detail ? `导入失败，${detail}` : '导入失败，未知错误', 'error')
+    useStore.getState().showToast(detail ? `导入失败，${detail}` : '导入失败', 'error')
     return false
   } finally {
     endDataProgress()

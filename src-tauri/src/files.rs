@@ -68,7 +68,7 @@ fn check_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-const IN_DATA_DIR: &str = "不能选择应用数据目录或其中的文件夹，请选择其他位置";
+const IN_DATA_DIR: &str = "不能选择应用数据目录。";
 
 /// 目录可能尚不存在：规范化最近的已存在上级，再接上其余部分
 pub(crate) fn normalize(path: &Path) -> PathBuf {
@@ -410,11 +410,9 @@ pub async fn download_dir_get(state: State<'_, StorageState>) -> Result<String, 
 #[derive(Default)]
 pub struct MigrateSource(Mutex<Option<PathBuf>>);
 
-const NESTED: &str = "新地址与原地址存在包含关系（其中一个位于另一个之中），无法迁移原有文件";
-const CONTAINS_DATA: &str =
-    "原地址包含应用数据目录（例如是安装目录或其上级），为避免移动应用数据和程序文件，无法迁移原有文件";
-const SYSTEM_DIR: &str =
-    "原地址是磁盘根目录、用户主目录、系统应用数据目录或其上级，或包含下载、图片等系统文件夹，为安全起见无法迁移原有文件";
+const NESTED: &str = "新旧地址不能互相包含。";
+const CONTAINS_DATA: &str = "原地址里有应用数据或程序文件。";
+const SYSTEM_DIR: &str = "原地址是磁盘根目录、用户文件夹或系统文件夹。";
 
 /// 已规范化的系统目录：protected（用户主目录、AppData 下的 Roaming 和 Local）及其上级不能迁移；
 /// 已知文件夹（下载、图片等）可以迁移内容，但保留文件夹本身，包含已知文件夹的上级目录不能迁移；
@@ -643,8 +641,9 @@ pub async fn download_dir_use(
         // 纵深防御：meta 中的值只能经 download_dir_pick 写入，写入前仍再确认不在数据目录内
         check_outside(&dir, Some(storage.root()))?;
         ensure_writable(&dir).map_err(|err| {
+            log::warn!("默认保存地址不可用（{}）：{err}", dir.display());
             format!(
-                "默认保存地址不可用（{}）：{err}。请在“设置 → 习惯配置”中重新选择默认保存地址，或把文件保存位置改为“每次询问”",
+                "默认保存地址不可用：{}。请在 设置 → 习惯配置 中重新选择，或改为“每次询问”。",
                 dir.display()
             )
         })?;

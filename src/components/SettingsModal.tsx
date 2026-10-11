@@ -639,7 +639,7 @@ export default function SettingsModal() {
     const now = Date.now()
     if (now - dataTransferToastAtRef.current < 1000) return
     dataTransferToastAtRef.current = now
-    showToast(dataTransferMode === 'export' ? '正在导出中，请稍候' : '正在导入中，请稍候', 'info')
+    showToast(dataTransferMode === 'export' ? '正在导出' : '正在导入', 'info')
   }
 
   useEffect(() => {
@@ -677,7 +677,7 @@ export default function SettingsModal() {
 
   const handleExport = async () => {
     if (exportTasks && hasRunningOperations) {
-      showToast('当前有任务正在进行，请完成或停止后再导出', 'error')
+      showToast('有任务正在进行，完成或停止后再导出', 'error')
       return
     }
     setIsExportingData(true)
@@ -692,7 +692,7 @@ export default function SettingsModal() {
     const files = Array.from(e.target.files ?? [])
     if (files.length) {
       if (importTasks && hasRunningOperations) {
-        showToast('当前有任务正在进行，请完成或停止后再导入', 'error')
+        showToast('有任务正在进行，完成或停止后再导入', 'error')
         e.target.value = ''
         return
       }
@@ -1824,7 +1824,7 @@ export default function SettingsModal() {
                     <ExportIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
                     <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">导出数据</h4>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">{isTauri ? `受文件大小限制，过大的备份将自动分片，${draft.saveLocationMode === 'default' ? '全部分片保存到默认保存地址' : '导出时选择一个文件夹保存全部分片'}` : '受浏览器文件大小限制，过大的备份将自动分片导出，请允许浏览器下载多个文件'}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{isTauri ? `受文件大小限制，过大的备份将自动分卷，${draft.saveLocationMode === 'default' ? '全部分卷保存到默认保存地址' : '导出时选择一个文件夹保存全部分卷'}` : '受浏览器文件大小限制，过大的备份将自动分卷导出，请允许浏览器下载多个文件'}</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-3">
                     <Checkbox
                       checked={exportConfig}
@@ -1861,7 +1861,7 @@ export default function SettingsModal() {
                     <ImportIcon className="w-4 h-4 text-gray-700 dark:text-gray-300" />
                     <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">导入数据</h4>
                   </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">支持一次导入多个普通备份；分片备份请一次性选中同一批次的全部分片</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">支持一次导入多个普通备份；分卷备份请一次性选中同一批次的全部分卷</p>
                   <div className="flex flex-wrap gap-x-6 gap-y-3">
                     {!presetConfigOnly && <Checkbox
                       checked={importConfig}
