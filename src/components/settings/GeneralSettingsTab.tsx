@@ -7,6 +7,7 @@ import { openTauriLogDir } from '../../lib/tauriLog'
 import { useStore } from '../../store'
 import Select from '../Select'
 import FontSettingField from './FontSettingField'
+import ProxySettingsSection from './ProxySettingsSection'
 import { changeSaveDirWithMigration } from './saveDirMigration'
 
 interface GeneralSettingsTabProps {
@@ -403,6 +404,7 @@ export default function GeneralSettingsTab({
           </div>
         </div>
       </section>
+      {isTauri && <ProxySettingsSection />}
       <section className="space-y-4">
         <h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">更新</h4>
         <div className="block">

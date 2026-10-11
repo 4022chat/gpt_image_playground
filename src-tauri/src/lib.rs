@@ -3,6 +3,7 @@ mod diagnostics;
 mod files;
 mod http;
 mod migrate;
+mod proxy;
 mod storage;
 mod update;
 
@@ -76,6 +77,8 @@ pub fn run() {
             http::http_send,
             http::http_read,
             http::http_cancel,
+            proxy::proxy_get,
+            proxy::proxy_set,
             update::update_ready,
             update::update_download,
             update::update_install,
@@ -120,6 +123,8 @@ pub fn run() {
                         false
                     }
                 });
+            // 代理设置需在主窗口创建前生效，前端加载后立即可能发出请求
+            app.manage(proxy::Proxy::load(&state));
             app.manage(state);
             let info = app.package_info().clone();
             tauri::async_runtime::spawn_blocking(move || update::cleanup(&info.name, &info.version));

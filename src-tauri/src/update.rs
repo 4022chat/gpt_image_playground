@@ -14,6 +14,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_updater::{Error, Update, UpdaterExt};
 
+use crate::proxy::{Proxy, Route};
 use crate::{files, storage};
 
 const META_FILE: &str = "update.json";
@@ -139,6 +140,12 @@ pub fn cleanup(app_name: &str, current: &Version) {
 /// any 为 true 时不比较版本，只为取得安装所需的 Update 句柄
 async fn check<R: Runtime>(app: &AppHandle<R>, any: bool) -> Result<Update, String> {
     let builder = app.updater_builder().timeout(Duration::from_secs(30));
+    // 与 API 请求使用同一代理设置；检查得到的 Update 会带上这里的代理设置，下载时沿用
+    let builder = match app.state::<Proxy>().route() {
+        Route::System => builder,
+        Route::Direct => builder.no_proxy(),
+        Route::Via(url) => builder.proxy(url),
+    };
     let builder = if any {
         builder.version_comparator(|_, _| true)
     } else {
@@ -167,7 +174,7 @@ async fn check<R: Runtime>(app: &AppHandle<R>, any: bool) -> Result<Update, Stri
         }
         Err(err @ (Error::Reqwest(_) | Error::Network(_))) => {
             log::warn!("检查客户端更新失败：{err}");
-            Err("网络连接失败，请检查网络后重试".into())
+            Err("网络连接失败，请检查网络和代理设置后重试".into())
         }
         Err(err) => Err(format!("检查客户端更新失败：{err}")),
     }
@@ -221,7 +228,7 @@ pub async fn update_download<R: Runtime>(
             log::warn!("下载更新包失败：{err}");
             match err {
                 Error::Reqwest(err) if err.is_timeout() => "下载更新包超时，请重试".into(),
-                Error::Reqwest(_) | Error::Network(_) => "网络连接失败，请检查网络后重试".into(),
+                Error::Reqwest(_) | Error::Network(_) => "网络连接失败，请检查网络和代理设置后重试".into(),
                 Error::Minisign(_)
                 | Error::Base64(_)
                 | Error::SignatureUtf8(_)

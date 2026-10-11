@@ -13,6 +13,7 @@
     "files",
     "app-update",
     "http-request",
+    "network-proxy",
     "log:default",
     "deep-link:allow-get-current",
     "clipboard-manager:allow-read-text",

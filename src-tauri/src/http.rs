@@ -14,6 +14,7 @@ use tauri::State;
 use tokio::sync::watch;
 
 use crate::files::header;
+use crate::proxy::{Proxy, Route};
 
 const CANCELED: &str = "请求已取消";
 const USER_AGENT: &str = concat!("gpt-image-playground/", env!("CARGO_PKG_VERSION"));
@@ -81,10 +82,20 @@ fn describe(err: &reqwest::Error) -> (String, Option<ErrorKind>) {
     (detail, kind)
 }
 
-fn send_error(err: &reqwest::Error) -> String {
+/// proxied 为 true 表示这次请求经过自定义代理；跟随系统时不知道是否经过代理，只能从 reqwest 的隧道错误判断
+fn send_error(err: &reqwest::Error, proxied: bool) -> String {
     let (detail, kind) = describe(err);
     let lower = detail.to_lowercase();
-    let reason = if err.is_timeout() || kind == Some(ErrorKind::TimedOut) {
+    let tls = ["certificate", "tls", "handshake", "corrupt message"].iter().any(|s| lower.contains(s));
+    let reason = if lower.contains("proxy authorization required") {
+        "代理服务器要求身份验证，请检查代理地址中的用户名和密码"
+    } else if lower.contains("tunnel error: unsuccessful") {
+        "代理服务器未能连接到目标地址"
+    } else if lower.contains("tunnel error: failed to create underlying connection")
+        || (proxied && err.is_connect() && !tls)
+    {
+        "无法连接代理服务器，请检查代理地址和端口是否正确、代理软件是否已启动"
+    } else if err.is_timeout() || kind == Some(ErrorKind::TimedOut) {
         "连接超时，服务器长时间没有响应"
     } else if lower.contains("dns error") {
         "无法解析域名，请检查 API 地址是否正确"
@@ -94,7 +105,7 @@ fn send_error(err: &reqwest::Error) -> String {
         "连接被服务器重置"
     } else if lower.contains("connection closed before message completed") {
         "服务器未返回响应就关闭了连接"
-    } else if ["certificate", "tls", "handshake", "corrupt message"].iter().any(|s| lower.contains(s)) {
+    } else if tls {
         "TLS 握手失败，请检查服务器证书"
     } else if err.is_redirect() {
         "重定向次数过多"
@@ -117,8 +128,8 @@ fn subscribe(state: &Requests, id: &str) -> Result<watch::Receiver<bool>, String
     Ok(pending.cancel.subscribe())
 }
 
-/// 校验请求参数并构造请求
-fn build(meta: &Meta, body: Vec<u8>) -> Result<reqwest::RequestBuilder, String> {
+/// 校验请求参数并构造请求，同时返回这次请求是否经过自定义代理
+fn build(meta: &Meta, body: Vec<u8>, route: &Route) -> Result<(reqwest::RequestBuilder, bool), String> {
     let url = Url::parse(&meta.url).map_err(|err| format!("请求地址不合法：{err}"))?;
     // 只允许 http/https，主机和端口不限
     if !matches!(url.scheme(), "http" | "https") {
@@ -144,18 +155,23 @@ fn build(meta: &Meta, body: Vec<u8>) -> Result<reqwest::RequestBuilder, String> 
     if body.is_empty() && matches!(method, Method::POST | Method::PUT) {
         headers.insert(CONTENT_LENGTH, HeaderValue::from_static("0"));
     }
-    // 与原先的插件一样每次新建客户端：系统代理设置变化后的请求立即生效，取消时连接不会留在连接池中
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
+    // 每次新建客户端：系统代理和应用内的代理设置变化后的请求立即生效，取消时连接不会留在连接池中
+    let client = route
+        .apply(reqwest::Client::builder().user_agent(USER_AGENT))
+        .and_then(|builder| builder.build())
         .map_err(|err| format!("创建 HTTP 客户端失败：{err}"))?;
+    let proxied = route.proxies(&url);
     let req = client.request(method, url).headers(headers);
-    Ok(if body.is_empty() { req } else { req.body(body) })
+    Ok((if body.is_empty() { req } else { req.body(body) }, proxied))
 }
 
 /// 发出请求并等待响应头。请求参数经 x-meta 头传入（encodeURIComponent 编码的 JSON），请求体为二进制
 #[tauri::command]
-pub async fn http_send(request: Request<'_>, state: State<'_, Requests>) -> Result<Head, String> {
+pub async fn http_send(
+    request: Request<'_>,
+    state: State<'_, Requests>,
+    proxy: State<'_, Proxy>,
+) -> Result<Head, String> {
     let meta = percent_encoding::percent_decode_str(header(&request, "x-meta"))
         .decode_utf8()
         .map_err(|_| "请求参数不是合法的 UTF-8".to_string())?;
@@ -166,8 +182,8 @@ pub async fn http_send(request: Request<'_>, state: State<'_, Requests>) -> Resu
         InvokeBody::Raw(bytes) => bytes.clone(),
         _ => Vec::new(),
     };
-    let req = match build(&meta, body) {
-        Ok(req) => req,
+    let (req, proxied) = match build(&meta, body, &proxy.route()) {
+        Ok(built) => built,
         Err(err) => {
             state.lock().remove(&meta.id);
             return Err(err);
@@ -183,7 +199,7 @@ pub async fn http_send(request: Request<'_>, state: State<'_, Requests>) -> Resu
         Ok(res) => res,
         Err(err) => {
             map.remove(&meta.id);
-            return Err(send_error(&err));
+            return Err(send_error(&err, proxied));
         }
     };
     let status = res.status().as_u16();
@@ -256,5 +272,30 @@ pub fn http_cancel(id: String, state: State<'_, Requests>) {
         None => {
             map.insert(id, Pending::new(true));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reports_unreachable_proxy() {
+        // 取一个刚释放、没有服务监听的本机端口作为代理
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let route = Route::Via(crate::proxy::parse(&format!("127.0.0.1:{port}")).unwrap().1);
+        let meta = Meta {
+            id: "1".into(),
+            method: "GET".into(),
+            url: "https://example.invalid/".into(),
+            headers: Vec::new(),
+        };
+        let (req, proxied) = build(&meta, Vec::new(), &route).unwrap();
+        assert!(proxied);
+        let err = req.send().await.unwrap_err();
+        assert!(send_error(&err, true).starts_with("无法连接代理服务器"));
+        // 跟随系统时不知道是否经过代理，也能从隧道错误认出代理连接失败
+        let msg = send_error(&err, false);
+        assert!(msg.starts_with("无法连接代理服务器"), "{msg}");
     }
 }
