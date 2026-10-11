@@ -1,3 +1,4 @@
+mod data_dir;
 mod diagnostics;
 mod files;
 mod http;
@@ -8,6 +9,8 @@ mod update;
 use tauri::Manager;
 
 pub fn run() {
+    // 日志、存储和 WebView2 都使用数据目录，需最先确定；有待迁移的更改时在此完成迁移
+    data_dir::prepare();
     tauri::Builder::default()
         // single-instance 需最先注册，第二个实例启动时把已有主窗口带到前台后退出。
         // 开启 deep-link feature 后，第二个实例收到的 deep link 会先转交 deep-link 插件，由前端监听导入
@@ -54,6 +57,9 @@ pub fn run() {
             storage::commands::kv_remove,
             storage::commands::storage_info,
             storage::commands::storage_open_dir,
+            data_dir::data_dir_notice,
+            data_dir::data_dir_pick,
+            data_dir::data_dir_change,
             diagnostics::log_set_enabled,
             diagnostics::log_open_dir,
             files::save_file,
@@ -78,6 +84,7 @@ pub fn run() {
         .manage(files::SaveDirs::default())
         .manage(files::Writes::default())
         .manage(files::MigrateSource::default())
+        .manage(data_dir::PickedDir::default())
         .manage(http::Requests::default())
         // 页面重载（含开发时的热重载）后旧页面的请求已无人读取，立即断开；未提交的保存也无人继续，删除临时文件
         .on_page_load(|webview, payload| {
@@ -87,6 +94,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            data_dir::log_notice();
             // 安装版由 NSIS 注册协议。开发版只在设置了 GPT_IMAGE_PLAYGROUND_REGISTER_DEEP_LINK 时才注册，
             // 注册会把 HKCU 下的协议改为指向当前开发版程序，覆盖安装版的注册；
             // 之后需重装正式版，或删除 HKCU\Software\Classes\gpt-image-playground，才能恢复
@@ -99,7 +107,7 @@ pub fn run() {
             }
             // 存储需在主窗口创建前就绪，前端加载后立即会读取任务和图片
             let state = storage::init();
-            // WebView2 数据放在数据目录的 webview/ 下，随安装目录走；数据目录不可用时用默认位置，不影响窗口创建
+            // WebView2 数据放在数据目录的 webview/ 下，随数据目录走；数据目录不可用时用默认位置，不影响窗口创建
             let webview_dir = state
                 .0
                 .as_ref()

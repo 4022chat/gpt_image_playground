@@ -80,7 +80,7 @@ fn candidates<'a>(
 }
 
 #[cfg(windows)]
-fn wide(path: &Path) -> Vec<u16> {
+pub(crate) fn wide(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
@@ -111,7 +111,7 @@ fn is_cross_device(err: &io::Error) -> bool {
 }
 
 /// 删除文件或文件夹；只读文件先去掉只读属性
-fn remove_any(path: &Path) -> io::Result<()> {
+pub(crate) fn remove_any(path: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(path)?;
     if meta.is_dir() {
         return fs::remove_dir_all(path);
@@ -130,7 +130,7 @@ fn remove_any(path: &Path) -> io::Result<()> {
 
 /// 复制单个文件，目标已存在时报 AlreadyExists；保留修改时间与属性
 #[cfg(windows)]
-fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
+pub(crate) fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
     use windows_sys::Win32::Storage::FileSystem::{CopyFileExW, COPY_FILE_FAIL_IF_EXISTS};
     let ok = unsafe {
         CopyFileExW(
@@ -149,7 +149,7 @@ fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
+pub(crate) fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
     let meta = fs::metadata(src)?;
     let mut reader = fs::File::open(src)?;
     let mut writer = fs::OpenOptions::new()

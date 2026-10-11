@@ -99,16 +99,9 @@ pub struct StorageInfo {
 /// 初始化失败时也放入 State，命令统一返回 unavailable 错误
 pub struct StorageState(pub std::result::Result<Arc<Storage>, StorageError>);
 
-/// 发布版为 exe 同级的 data/；debug 构建（含 tauri dev）使用 src-tauri/dev-data/
+/// 本次运行使用的数据目录，见 data_dir 模块
 pub fn data_dir() -> std::io::Result<PathBuf> {
-    if cfg!(debug_assertions) {
-        return Ok(Path::new(env!("CARGO_MANIFEST_DIR")).join("dev-data"));
-    }
-    let exe = std::env::current_exe()?;
-    let dir = exe
-        .parent()
-        .ok_or_else(|| std::io::Error::other("无法确定程序所在目录"))?;
-    Ok(dir.join("data"))
+    crate::data_dir::current()
 }
 
 /// 启动时调用：打开存储并在后台清理孤儿文件；失败只记录日志，由命令把错误交给前端

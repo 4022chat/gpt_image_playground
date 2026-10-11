@@ -230,3 +230,37 @@ export function getStorageInfo(): Promise<StorageInfo> {
 export async function openStorageDir(): Promise<void> {
   await call('storage_open_dir')
 }
+
+/** 选好的新数据目录：原目录、新目录与当前数据的文件数和大小 */
+export type DataDirChange = {
+  from: string
+  to: string
+  files: number
+  bytes: number
+  /** 不能使用所选目录的原因 */
+  blocked: string | null
+}
+
+/** 弹出目录选择框选择新数据目录；所选目录不能使用时 blocked 为原因。取消时返回 null */
+export function pickDataDir(): Promise<DataDirChange | null> {
+  return call('data_dir_pick')
+}
+
+/** 确认更改：客户端随即重启，在下次启动时迁移 */
+export async function changeDataDir(): Promise<void> {
+  await call('data_dir_change')
+}
+
+/** 启动时确定数据目录的结果之一：标题、一句话结论、[标签, 路径] 列表与补充说明 */
+export interface DataDirNotice {
+  kind: 'success' | 'warning'
+  title: string
+  message: string
+  paths: Array<[string, string]>
+  details: string[]
+}
+
+/** 启动提示只返回一次；custom 表示数据目录不是默认位置 */
+export function takeDataDirNotice(): Promise<{ notices: DataDirNotice[], custom: boolean }> {
+  return call('data_dir_notice')
+}

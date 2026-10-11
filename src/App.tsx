@@ -27,7 +27,9 @@ import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
 import AnnouncementModal from './components/AnnouncementModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
+import { showStartupNotices, type NoticeSection } from './components/startupNotice'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
+import { takeDataDirNotice } from './lib/dbTauri'
 import { isTauri } from './lib/platform'
 import { setSaveToDefaultDir } from './lib/saveFile'
 import { setTauriLogEnabled } from './lib/tauriLog'
@@ -53,30 +55,42 @@ export default function App() {
   useImportLinks(startupImportDone)
 
   useEffect(() => {
-    const err = getTauriStorageLoadError()
-    if (!err) return
-    // unavailable 涵盖目录不可写、数据库版本过高、版本信息损坏、无法打开数据库等，按 Rust 侧的说明区分建议
-    const unavailable = err.code === 'unavailable'
-    const advice = !unavailable
-      ? '读取设置时数据库出错，可能已损坏。可以先在「设置 → 数据管理」中尝试导出备份，再反馈问题。'
-      : err.message.includes('不可写')
-        ? '通常是因为安装到了需要管理员权限才能写入的位置（例如 `C:\\Program Files`）。请卸载后重新安装到有写权限的目录，例如 `D:\\Apps\\GPT Image Playground`。'
-        : err.message.includes('高于当前客户端')
-          ? '数据目录由更新版本的客户端创建，请升级到最新版本的客户端后再打开。'
-          : '数据目录或数据库无法打开，可能已损坏或被其他程序占用。请关闭可能占用数据目录的程序后重启客户端。'
-    useStore.getState().setConfirmDialog({
-      title: '无法保存数据',
-      message: [
-        unavailable
-          ? '客户端无法使用本地数据目录，本次运行中的配置、任务和图片都不会被保存。'
-          : '客户端无法读取已保存的设置，当前显示的是默认设置，本次运行中对设置的修改不会被保存。',
-        `原因：${err.message}`,
-        advice,
-      ].join('\n\n'),
-      confirmText: '我知道了',
-      showCancel: false,
-      tone: 'warning',
-    })
+    if (!isTauri) return
+    // 启动时的提示合并到一个弹窗中，避免后到的覆盖先到的：存储无法使用的原因，以及更改数据目录的结果
+    void takeDataDirNotice()
+      .catch((err) => {
+        console.error('读取数据目录提示失败：', err)
+        return { notices: [], custom: false }
+      })
+      .then(({ notices, custom }) => {
+        const state = useStore.getState()
+        const success = notices.find((notice) => notice.kind === 'success')
+        if (success) state.showToast(success.message, 'success')
+        const sections: NoticeSection[] = []
+        const err = getTauriStorageLoadError()
+        if (err) {
+          // unavailable 涵盖目录不可写、数据库版本过高、版本信息损坏、无法打开数据库等，按 Rust 侧的说明区分建议
+          const unavailable = err.code === 'unavailable'
+          const advice = !unavailable
+            ? '读取设置时数据库出错，可能已损坏。可以先在「设置 → 数据管理」中尝试导出备份，再反馈问题。'
+            : err.message.includes('不可写')
+              ? custom
+                ? '请在「设置 → 数据管理」中把数据目录改到有写权限的位置。'
+                : '通常是因为安装到了需要管理员权限才能写入的位置（例如 C:\\Program Files）。请卸载后重新安装到有写权限的目录，例如 D:\\Apps\\GPT Image Playground，或在「设置 → 数据管理」中更改数据目录。'
+              : err.message.includes('高于当前客户端')
+                ? '数据目录由更新版本的客户端创建，请升级到最新版本的客户端后再打开。'
+                : '数据目录或数据库无法打开，可能已损坏或被其他程序占用。请关闭可能占用数据目录的程序后重启客户端。'
+          sections.push({
+            title: '无法保存数据',
+            message: unavailable
+              ? '客户端无法使用本地数据目录，本次运行中的配置、任务和图片都不会被保存。'
+              : '客户端无法读取已保存的设置，当前显示的是默认设置，本次运行中对设置的修改不会被保存。',
+            details: [`原因：${err.message}`, advice],
+          })
+        }
+        sections.push(...notices.filter((notice) => notice.kind === 'warning'))
+        showStartupNotices(sections)
+      })
   }, [])
 
   useEffect(() => {

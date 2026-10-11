@@ -15,6 +15,7 @@ use tauri::{AppHandle, Manager, Runtime, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tempfile::NamedTempFile;
 
+use crate::data_dir;
 use crate::migrate::{self, MoveReport};
 use crate::storage::{self, Storage, StorageState};
 
@@ -70,7 +71,7 @@ fn check_name(name: &str) -> Result<(), String> {
 const IN_DATA_DIR: &str = "不能选择应用数据目录或其中的文件夹，请选择其他位置";
 
 /// 目录可能尚不存在：规范化最近的已存在上级，再接上其余部分
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut existing = path;
     let mut rest = Vec::new();
     loop {
@@ -253,7 +254,10 @@ pub async fn save_file(
     .map(Some)
 }
 
-fn pick_folder(window: WebviewWindow, start: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
+pub(crate) fn pick_folder(
+    window: WebviewWindow,
+    start: Option<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
     let dialog = window.dialog().file().set_parent(&window);
     let picked = match start {
         Some(dir) => dialog.set_directory(dir),
@@ -350,9 +354,9 @@ pub async fn save_abort(writes: State<'_, Writes>, id: u32) -> Result<(), String
 const DOWNLOAD_DIR_KEY: &str = "download_dir";
 
 /// 用户未在设置中更改时的默认保存地址：优先使用安装程序写入 <数据目录>/download-dir.txt 的目录
-/// （一行绝对路径，UTF-8；相对路径或位于数据目录内时忽略），否则为与数据目录同级的 downloads/。
-/// 开发版的数据目录是 src-tauri/dev-data/，改用同级且已被 git 忽略的 dev-downloads/
-fn initial_download_dir(data_dir: &Path) -> PathBuf {
+/// （一行绝对路径，UTF-8；相对路径或位于数据目录内时忽略），否则为安装目录下的 downloads/，不随数据目录的位置变化。
+/// 开发版改用 src-tauri/ 下已被 git 忽略的 dev-downloads/
+fn initial_download_dir(data_dir: &Path, base: &Path) -> PathBuf {
     let from_installer = fs::read_to_string(data_dir.join("download-dir.txt"))
         .ok()
         .map(|text| {
@@ -368,7 +372,7 @@ fn initial_download_dir(data_dir: &Path) -> PathBuf {
     } else {
         "downloads"
     };
-    data_dir.parent().unwrap_or(data_dir).join(name)
+    base.join(name)
 }
 
 fn storage<'a>(state: &'a State<'_, StorageState>) -> Result<&'a Storage, String> {
@@ -381,9 +385,11 @@ fn download_dir(storage: &Storage) -> Result<PathBuf, String> {
     let saved = storage
         .meta_get(DOWNLOAD_DIR_KEY)
         .map_err(|err| err.message)?;
-    Ok(saved
-        .map(PathBuf::from)
-        .unwrap_or_else(|| initial_download_dir(storage.root())))
+    if let Some(dir) = saved {
+        return Ok(PathBuf::from(dir));
+    }
+    let base = data_dir::base_dir().map_err(|err| format!("无法定位安装目录：{err}"))?;
+    Ok(initial_download_dir(storage.root(), &base))
 }
 
 /// 不存在时创建，并实际创建临时文件探测权限，提前发现目录不可写或所在磁盘已移除
@@ -411,16 +417,47 @@ const SYSTEM_DIR: &str =
     "原地址是磁盘根目录、用户主目录、系统应用数据目录或其上级，或包含下载、图片等系统文件夹，为安全起见无法迁移原有文件";
 
 /// 已规范化的系统目录：protected（用户主目录、AppData 下的 Roaming 和 Local）及其上级不能迁移；
-/// 已知文件夹（下载、图片等）可以迁移内容，但保留文件夹本身，包含已知文件夹的上级目录不能迁移
+/// 已知文件夹（下载、图片等）可以迁移内容，但保留文件夹本身，包含已知文件夹的上级目录不能迁移；
+/// system（Windows、Program Files、ProgramData、临时文件夹）和 cloud（OneDrive）只用于限制数据目录的位置
 #[derive(Default)]
-struct SystemDirs {
-    protected: Vec<PathBuf>,
-    known: Vec<PathBuf>,
+pub(crate) struct SystemDirs {
+    pub protected: Vec<PathBuf>,
+    pub known: Vec<PathBuf>,
+    pub system: Vec<PathBuf>,
+    pub cloud: Vec<PathBuf>,
 }
 
-fn system_dirs<R: Runtime>(app: &AppHandle<R>) -> SystemDirs {
+fn env_paths(names: &[&str]) -> Vec<PathBuf> {
+    names
+        .iter()
+        .filter_map(std::env::var_os)
+        .filter(|value| !value.is_empty())
+        .map(|value| normalize(Path::new(&value)))
+        .collect()
+}
+
+/// 只靠环境变量就能确定的系统目录，启动时（还没有 AppHandle）也能使用；不含已知文件夹
+pub(crate) fn env_dirs() -> SystemDirs {
+    let mut system = env_paths(&[
+        "SystemRoot",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramW6432",
+        "ProgramData",
+    ]);
+    system.push(normalize(&std::env::temp_dir()));
+    SystemDirs {
+        protected: env_paths(&["USERPROFILE", "APPDATA", "LOCALAPPDATA"]),
+        known: Vec::new(),
+        system,
+        cloud: env_paths(&["OneDrive", "OneDriveConsumer", "OneDriveCommercial"]),
+    }
+}
+
+pub(crate) fn system_dirs<R: Runtime>(app: &AppHandle<R>) -> SystemDirs {
     let path = app.path();
-    let known = [
+    let mut dirs = env_dirs();
+    dirs.known = [
         path.download_dir(),
         path.picture_dir(),
         path.desktop_dir(),
@@ -433,12 +470,13 @@ fn system_dirs<R: Runtime>(app: &AppHandle<R>) -> SystemDirs {
     .flatten()
     .map(|dir| normalize(&dir))
     .collect();
-    let protected = [path.home_dir(), path.data_dir(), path.local_data_dir()]
-        .into_iter()
-        .flatten()
-        .map(|dir| normalize(&dir))
-        .collect();
-    SystemDirs { protected, known }
+    dirs.protected.extend(
+        [path.home_dir(), path.data_dir(), path.local_data_dir()]
+            .into_iter()
+            .flatten()
+            .map(|dir| normalize(&dir)),
+    );
+    dirs
 }
 
 /// 不能迁移的原因，参数均已规范化；数据目录只按包含关系判断（原地址在数据目录内另由 check_outside 拦截）
@@ -741,15 +779,15 @@ mod tests {
         } else {
             "downloads"
         });
-        assert_eq!(initial_download_dir(&data), fallback);
+        assert_eq!(initial_download_dir(&data, dir.path()), fallback);
         // 相对路径不可信，忽略
         fs::write(data.join("download-dir.txt"), "downloads").unwrap();
-        assert_eq!(initial_download_dir(&data), fallback);
+        assert_eq!(initial_download_dir(&data, dir.path()), fallback);
         // 指向数据目录内（含尚不存在的子目录）时忽略
         for inside in [data.clone(), data.join("images"), data.join("x").join("y")] {
             fs::write(data.join("download-dir.txt"), inside.display().to_string()).unwrap();
             assert_eq!(
-                initial_download_dir(&data),
+                initial_download_dir(&data, dir.path()),
                 fallback,
                 "{}",
                 inside.display()
@@ -761,7 +799,7 @@ mod tests {
             format!("\u{feff}{}\r\nignored", picked.display()),
         )
         .unwrap();
-        assert_eq!(initial_download_dir(&data), picked);
+        assert_eq!(initial_download_dir(&data, dir.path()), picked);
     }
 
     #[test]
@@ -854,6 +892,8 @@ mod tests {
         let sys = SystemDirs {
             protected: vec![normalize(&old)],
             known: vec![normalize(&old2)],
+            system: vec![],
+            cloud: vec![],
         };
         assert_eq!(
             previous_dir(&old, &new, &data, &sys).unwrap().blocked,
@@ -878,6 +918,8 @@ mod tests {
                 PathBuf::from(r"C:\Users\me\AppData\Local"),
             ],
             known: vec![PathBuf::from(r"D:\Shell\Pictures")],
+            system: vec![],
+            cloud: vec![],
         };
         let data = Path::new(r"D:\Apps\GIP\data");
         let to = Path::new(r"E:\新地址");

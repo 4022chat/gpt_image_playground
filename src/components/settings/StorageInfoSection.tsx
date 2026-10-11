@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
-import { getStorageInfo, openStorageDir, type StorageInfo } from '../../lib/dbTauri'
+import { changeDataDir, getStorageInfo, openStorageDir, pickDataDir, type StorageInfo } from '../../lib/dbTauri'
 import { formatBytes } from '../../lib/formatBytes'
+import { flushTauriStorage } from '../../lib/tauriStorage'
 import { useStore } from '../../store'
+import { ExternalLinkIcon } from '../icons'
+import { PathBox } from './saveDirMigration'
 
-/** 仅客户端：显示本地数据目录与占用空间 */
+/** 仅客户端：显示本地数据目录与占用空间，可更改数据目录 */
 export default function StorageInfoSection() {
   const showToast = useStore((s) => s.showToast)
+  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const [info, setInfo] = useState<StorageInfo | null>(null)
   const [error, setError] = useState('')
 
@@ -25,6 +29,57 @@ export default function StorageInfoSection() {
       console.error('打开数据目录失败：', err)
       showToast(err instanceof Error ? err.message : '打开数据目录失败', 'error')
     }
+  }
+
+  const handleChange = async () => {
+    const change = await pickDataDir().catch((err) => {
+      console.error('选择数据目录失败：', err)
+      setConfirmDialog({
+        title: '无法使用该目录',
+        message: err instanceof Error ? err.message : String(err),
+        confirmText: '我知道了',
+        showCancel: false,
+      })
+      return null
+    })
+    if (!change) return
+    if (change.blocked) {
+      setConfirmDialog({
+        title: '无法使用该目录',
+        message: change.blocked,
+        content: <PathBox rows={[['当前目录', change.from], ['所选目录', change.to]]} />,
+        confirmText: '我知道了',
+        showCancel: false,
+      })
+      return
+    }
+    setConfirmDialog({
+      title: '更改数据目录',
+      message: `将 **${change.files}** 个文件（${formatBytes(change.bytes)}）复制到新目录，然后重启客户端。`,
+      content: (
+        <div className="space-y-3">
+          <PathBox rows={[['原目录', change.from], ['新目录', change.to]]} />
+          <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+            重启后会切换到新目录并删除原目录。正在进行的生成任务会中断。
+          </p>
+        </div>
+      ),
+      confirmText: '重启并更改',
+      busyText: '正在重启…',
+      awaitAction: true,
+      action: async () => {
+        try {
+          // 重启前写入尚未保存的设置
+          await flushTauriStorage()
+          await changeDataDir()
+          return false
+        } catch (err) {
+          console.error('更改数据目录失败：', err)
+          showToast(err instanceof Error ? err.message : '更改数据目录失败', 'error')
+          return true
+        }
+      },
+    })
   }
 
   const rows = info
@@ -47,9 +102,21 @@ export default function StorageInfoSection() {
         <p className="text-xs text-red-500 dark:text-red-400 break-all">{error}</p>
       ) : (
         <div className="space-y-2 text-xs text-gray-500 dark:text-gray-400">
-          <div className="break-all select-text">
+          <div className="break-all">
             <span className="text-gray-600 dark:text-gray-300">数据目录：</span>
-            {info?.dataDir ?? '读取中...'}
+            <span className="select-text">{info?.dataDir ?? '读取中...'}</span>
+            {info && (
+              // 紧跟在路径末尾，与文字同高同色，悬停时才加深
+              <button
+                type="button"
+                onClick={handleOpen}
+                title="打开数据目录"
+                aria-label="打开数据目录"
+                className="ml-1 inline-flex align-[-2px] text-gray-400 transition hover:text-blue-500 dark:text-gray-500 dark:hover:text-blue-400"
+              >
+                <ExternalLinkIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
           {rows.length > 0 && (
             <div className="flex flex-wrap gap-x-6 gap-y-1">
@@ -64,11 +131,10 @@ export default function StorageInfoSection() {
         </div>
       )}
       <button
-        onClick={handleOpen}
-        disabled={Boolean(error)}
-        className="w-full rounded-xl bg-gray-100/80 px-4 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 disabled:opacity-50 disabled:hover:bg-gray-100/80 disabled:hover:text-gray-700 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white dark:disabled:hover:bg-white/[0.06] dark:disabled:hover:text-gray-300 flex items-center justify-center gap-2"
+        onClick={handleChange}
+        className="w-full rounded-xl bg-gray-100/80 px-4 py-2.5 text-sm font-medium text-gray-700 transition-all hover:bg-gray-200 hover:text-gray-900 dark:bg-white/[0.06] dark:text-gray-300 dark:hover:bg-white/[0.1] dark:hover:text-white flex items-center justify-center gap-2"
       >
-        打开数据目录
+        更改数据目录
       </button>
     </div>
   )

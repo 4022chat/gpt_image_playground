@@ -6,8 +6,8 @@ import { changeDefaultSaveDir, migrateDefaultSaveDir, type MoveIssue, type MoveR
 import { useStore } from '../../store'
 import { CopyIcon } from '../icons'
 
-// 与首次保存询问弹窗中的地址框一致
-function PathBox({ rows }: { rows: Array<[string, string]> }) {
+// 与首次保存询问弹窗中的地址框一致；更改数据目录的确认框也使用
+export function PathBox({ rows }: { rows: Array<[string, string]> }) {
   return (
     <div data-selectable-text className="space-y-1.5 rounded-xl bg-black/[0.03] px-3 py-2.5 text-xs leading-relaxed dark:bg-white/[0.04]">
       {rows.map(([label, path]) => (

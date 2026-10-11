@@ -405,8 +405,8 @@ FunctionEnd
 
 ; GPT Image Playground：默认保存地址页。
 ; 客户端“文件保存位置”为“默认地址”时使用该目录，安装时写入 <安装目录>\data\download-dir.txt。
-; 被动（/P，应用内更新使用）、更新（/UPDATE）和静默安装不显示；安装目录中已有数据或该文件时也不显示，
-; 不写入，保留用户之前的选择
+; 被动（/P，应用内更新使用）、更新（/UPDATE）和静默安装不显示；安装目录中已有数据或该文件、
+; 或数据目录已在客户端中改到别处（存在 data-dir）时也不显示，不写入，保留用户之前的选择
 Var DownloadDir
 Var DownloadDirDefault
 Var DownloadDirInput
@@ -416,6 +416,7 @@ Function DownloadDirPageShow
   ${OrIf} $UpdateMode = 1
   ${OrIf} ${FileExists} "$INSTDIR\data\download-dir.txt"
   ${OrIf} ${FileExists} "$INSTDIR\data\data.db"
+  ${OrIf} ${FileExists} "$INSTDIR\data-dir"
     StrCpy $DownloadDir ""
     Abort
   ${EndIf}
@@ -1006,8 +1007,61 @@ Section Uninstall
     DeleteRegKey /ifempty HKCU "${MANUKEY}"
 
     SetShellVarContext current
-    ; GPT Image Playground：应用数据都在 <安装目录>\data 中，只删除它；
-    ; downloads 和另选的保存目录中是用户保存的图片与备份，任何情况下都不删除
+    ; GPT Image Playground：应用数据都在数据目录中，只删除它；
+    ; downloads 和另选的保存目录中是用户保存的图片与备份，任何情况下都不删除。
+    ; 在客户端中更改过数据目录时，<安装目录>\data-dir 中是新位置：一行路径，UTF-8 无 BOM，
+    ; 可能省略盘符（以 \ 开头，U 盘安装时），读取时补上安装目录的盘符。该目录由用户选择，可能还放了别的东西，
+    ; 只在其中确有 data.db 时删除本应用自己的文件和文件夹，最后只删除空的目录本身。
+    ; 不勾选删除数据或更新时保留 data-dir，重新安装到同一位置后仍使用该数据目录
+    ClearErrors
+    FileOpen $0 "$INSTDIR\data-dir" r
+    ${IfNot} ${Errors}
+      ; 多读一个字节的余量：缓冲区由 System::Alloc 清零，读入的内容之后总有结尾的 NUL
+      System::Alloc 4096
+      Pop $1
+      System::Call 'kernel32::ReadFile(p r0, p r1, i 4095, *i .r2, p 0)'
+      FileClose $0
+      StrCpy $3 ""
+      System::Call 'kernel32::MultiByteToWideChar(i 65001, i 0, p r1, i -1, w .r3, i ${NSIS_MAX_STRLEN})'
+      System::Free $1
+      ; 只取第一行
+      StrCpy $4 0
+      ${Do}
+        StrCpy $5 $3 1 $4
+        ${If} $5 == ""
+        ${OrIf} $5 == "$\r"
+        ${OrIf} $5 == "$\n"
+          ${ExitDo}
+        ${EndIf}
+        IntOp $4 $4 + 1
+      ${Loop}
+      StrCpy $3 $3 $4
+      ; 省略了盘符时补上安装目录的盘符
+      StrCpy $5 $3 1
+      StrCpy $6 $3 1 1
+      ${If} $5 == "\"
+      ${AndIf} $6 != "\"
+        StrCpy $5 $INSTDIR 2
+        StrCpy $3 "$5$3"
+      ${EndIf}
+      StrLen $4 $3
+      ${If} $4 > 3
+      ${AndIf} ${FileExists} "$3\data.db"
+        Delete "$3\data.db"
+        Delete "$3\data.db-wal"
+        Delete "$3\data.db-shm"
+        Delete "$3\data.db-journal"
+        Delete "$3\download-dir.txt"
+        RmDir /r "$3\images"
+        RmDir /r "$3\thumbnails"
+        RmDir /r "$3\tmp"
+        RmDir /r "$3\webview"
+        RmDir /r "$3\logs"
+        RmDir /r "$3\updates"
+        RMDir "$3"
+      ${EndIf}
+      Delete "$INSTDIR\data-dir"
+    ${EndIf}
     RmDir /r "$INSTDIR\data"
     RMDir "$INSTDIR"
     ; 窗口状态等插件数据写在下面两个目录；安装目录位于其中时不删除，避免连同用户文件一起删掉
