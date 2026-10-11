@@ -351,6 +351,11 @@ export default function SettingsModal() {
     setTimeoutInput(String(activeProfile.timeout))
   }, [activeProfile.id, activeProfile.timeout])
 
+  // 设置打开期间首次保存（例如导出备份）时会询问并写入保存方式，同步到草稿，避免之后提交草稿时被改回
+  useEffect(() => {
+    setDraft((prev) => prev.saveLocationMode === settings.saveLocationMode ? prev : { ...prev, saveLocationMode: settings.saveLocationMode })
+  }, [settings.saveLocationMode])
+
   useEffect(() => {
     if (showSettings && settingsTabRequest) setActiveTab(settingsTabRequest)
   }, [settingsTabRequest, showSettings])

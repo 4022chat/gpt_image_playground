@@ -1,5 +1,6 @@
 //! 保存文件：保存对话框和目录选择都在 Rust 侧弹出，前端只能写入用户刚在对话框中选择的位置，
-//! 不开放写任意路径的命令。默认保存地址同样只能经 Rust 侧的目录选择框更改，前端只能读取用于显示。
+//! 不开放写任意路径的命令。默认保存地址同样只能经 Rust 侧的目录选择框更改，前端只能读取用于显示；
+//! 更改后可把原地址中的内容迁移到新地址，原地址由 Rust 侧记下，前端不能指定。
 //! 文件内容以二进制 IPC 请求体分块传输：先在目标目录中创建临时文件，逐块追加，写完后改名为目标文件。
 //! 整个文件一次传输时，WebView2 浏览器进程会为几百 MB 的请求体占用数 GB 内存
 use std::collections::HashMap;
@@ -10,10 +11,11 @@ use std::sync::{Mutex, MutexGuard};
 
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request};
-use tauri::{State, WebviewWindow};
+use tauri::{AppHandle, Manager, Runtime, State, WebviewWindow};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tempfile::NamedTempFile;
 
+use crate::migrate::{self, MoveReport};
 use crate::storage::{self, Storage, StorageState};
 
 /// 本次运行中用户选择过的保存目录，前端凭序号写入，无法借此写入其他目录
@@ -398,30 +400,197 @@ pub async fn download_dir_get(state: State<'_, StorageState>) -> Result<String, 
     Ok(dir.display().to_string())
 }
 
-/// 弹出目录选择框更改默认保存地址，返回新地址；用户取消时返回 None
+/// 更改默认保存地址后待迁移的原目录，由 download_dir_pick 记下，前端无法指定其他目录
+#[derive(Default)]
+pub struct MigrateSource(Mutex<Option<PathBuf>>);
+
+const NESTED: &str = "新地址与原地址存在包含关系（其中一个位于另一个之中），无法迁移原有文件";
+const CONTAINS_DATA: &str =
+    "原地址包含应用数据目录（例如是安装目录或其上级），为避免移动应用数据和程序文件，无法迁移原有文件";
+const SYSTEM_DIR: &str =
+    "原地址是磁盘根目录、用户主目录、系统应用数据目录或其上级，或包含下载、图片等系统文件夹，为安全起见无法迁移原有文件";
+
+/// 已规范化的系统目录：protected（用户主目录、AppData 下的 Roaming 和 Local）及其上级不能迁移；
+/// 已知文件夹（下载、图片等）可以迁移内容，但保留文件夹本身，包含已知文件夹的上级目录不能迁移
+#[derive(Default)]
+struct SystemDirs {
+    protected: Vec<PathBuf>,
+    known: Vec<PathBuf>,
+}
+
+fn system_dirs<R: Runtime>(app: &AppHandle<R>) -> SystemDirs {
+    let path = app.path();
+    let known = [
+        path.download_dir(),
+        path.picture_dir(),
+        path.desktop_dir(),
+        path.document_dir(),
+        path.video_dir(),
+        path.audio_dir(),
+        path.public_dir(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|dir| normalize(&dir))
+    .collect();
+    let protected = [path.home_dir(), path.data_dir(), path.local_data_dir()]
+        .into_iter()
+        .flatten()
+        .map(|dir| normalize(&dir))
+        .collect();
+    SystemDirs { protected, known }
+}
+
+/// 不能迁移的原因，参数均已规范化；数据目录只按包含关系判断（原地址在数据目录内另由 check_outside 拦截）
+fn migration_block(
+    from: &Path,
+    to: &Path,
+    data_dir: &Path,
+    dirs: &SystemDirs,
+) -> Option<&'static str> {
+    if from.parent().is_none()
+        || dirs.protected.iter().any(|dir| dir.starts_with(from))
+        || dirs
+            .known
+            .iter()
+            .any(|dir| dir != from && dir.starts_with(from))
+    {
+        return Some(SYSTEM_DIR);
+    }
+    if migrate::is_nested(from, data_dir) {
+        return Some(CONTAINS_DATA);
+    }
+    if migrate::is_nested(from, to) {
+        return Some(NESTED);
+    }
+    None
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviousDir {
+    path: String,
+    files: u64,
+    bytes: u64,
+    /// 不能迁移的原因
+    blocked: Option<&'static str>,
+    /// 原地址是系统已知文件夹，迁移后保留文件夹本身
+    keep_source: bool,
+}
+
+#[derive(Serialize)]
+pub struct DirChange {
+    path: String,
+    /// 原地址中有文件时返回，供前端询问是否迁移
+    previous: Option<PreviousDir>,
+}
+
+/// 原地址存在且有文件时返回其统计；与新地址相同或位于数据目录内时返回 None。会遍历原目录，调用方需放在 block_in_place 中
+fn previous_dir(old: &Path, new: &Path, data_dir: &Path, dirs: &SystemDirs) -> Option<PreviousDir> {
+    let (old_real, new_real) = (normalize(old), normalize(new));
+    if old_real == new_real || !old.is_dir() || in_data_dir(old, data_dir) {
+        return None;
+    }
+    let blocked = migration_block(&old_real, &new_real, &normalize(data_dir), dirs);
+    let keep_source = dirs.known.contains(&old_real);
+    // 不能迁移时不遍历（可能是整个磁盘），只告知原因
+    let stats = match blocked {
+        Some(_) => migrate::DirStats::default(),
+        None => migrate::dir_stats(old, keep_source),
+    };
+    if blocked.is_none() && stats.files == 0 {
+        return None;
+    }
+    Some(PreviousDir {
+        path: old.display().to_string(),
+        files: stats.files,
+        bytes: stats.bytes,
+        blocked,
+        keep_source,
+    })
+}
+
+/// 迁移前再次确认可以迁移，返回是否保留原文件夹本身
+fn check_migration(
+    from: &Path,
+    to: &Path,
+    data_dir: &Path,
+    dirs: &SystemDirs,
+) -> Result<bool, String> {
+    check_outside(from, Some(data_dir))?;
+    check_outside(to, Some(data_dir))?;
+    let from_real = normalize(from);
+    if let Some(reason) = migration_block(&from_real, &normalize(to), &normalize(data_dir), dirs) {
+        return Err(reason.into());
+    }
+    Ok(dirs.known.contains(&from_real))
+}
+
+/// 弹出目录选择框更改默认保存地址，返回新地址，原地址中有文件时附上其统计；用户取消时返回 None
 #[tauri::command]
 pub async fn download_dir_pick(
     window: WebviewWindow,
     state: State<'_, StorageState>,
-) -> Result<Option<String>, String> {
+    source: State<'_, MigrateSource>,
+) -> Result<Option<DirChange>, String> {
+    // 之前记下的待迁移地址一律作废，取消选择或出错时也不能再迁移
+    source
+        .0
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .take();
     let storage = storage(&state)?;
+    let dirs = system_dirs(window.app_handle());
+    let old = tokio::task::block_in_place(|| download_dir(storage))?;
     // 从当前地址开始选择；目录不存在时由系统决定起始位置
-    let start = tokio::task::block_in_place(|| {
-        download_dir(storage).map(|dir| Some(dir).filter(|d| d.is_dir()))
-    })?;
+    let start = Some(old.clone()).filter(|d| d.is_dir());
     let picked = tauri::async_runtime::spawn_blocking(move || pick_folder(window, start))
         .await
         .map_err(|err| format!("目录选择框异常结束：{err}"))??;
     let Some(path) = picked else {
         return Ok(None);
     };
-    tokio::task::block_in_place(|| {
+    let previous = tokio::task::block_in_place(|| {
         check_outside(&path, Some(storage.root()))?;
         storage
             .meta_set(DOWNLOAD_DIR_KEY, &path.display().to_string())
-            .map_err(|err| format!("保存默认保存地址失败：{}", err.message))
+            .map_err(|err| format!("保存默认保存地址失败：{}", err.message))?;
+        Ok::<_, String>(previous_dir(&old, &path, storage.root(), &dirs))
     })?;
-    Ok(Some(path.display().to_string()))
+    *source.0.lock().unwrap_or_else(|err| err.into_inner()) = previous
+        .as_ref()
+        .filter(|p| p.blocked.is_none())
+        .map(|_| old);
+    Ok(Some(DirChange {
+        path: path.display().to_string(),
+        previous,
+    }))
+}
+
+/// 把上次更改前的原地址中的全部内容移动到当前默认保存地址，移空后删除原目录本身（系统已知文件夹除外）
+#[tauri::command]
+pub async fn download_dir_migrate(
+    app: AppHandle,
+    state: State<'_, StorageState>,
+    source: State<'_, MigrateSource>,
+) -> Result<MoveReport, String> {
+    let storage = storage(&state)?;
+    let from = source
+        .0
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .take()
+        .ok_or("没有待迁移的原地址，请重新更改默认保存地址")?;
+    let dirs = system_dirs(&app);
+    let (to, keep_source) = tokio::task::block_in_place(|| {
+        let to = download_dir(storage)?;
+        let keep = check_migration(&from, &to, storage.root(), &dirs)?;
+        Ok::<_, String>((to, keep))
+    })?;
+    tauri::async_runtime::spawn_blocking(move || migrate::move_contents(&from, &to, keep_source))
+        .await
+        .map_err(|err| format!("迁移异常结束：{err}"))?
+        .map_err(|err| format!("迁移失败：{err}"))
 }
 
 /// “默认地址”模式下保存前调用：确认默认保存地址可写，并像 save_dir_pick 一样登记，之后用 save_dir_begin 写入
@@ -617,6 +786,137 @@ mod tests {
             IN_DATA_DIR
         );
         assert!(check_outside(&data, None).is_ok());
+    }
+
+    #[test]
+    fn previous_dir_and_migration_checks() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let old = root.path().join("old");
+        let new = root.path().join("new");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(old.join("empty")).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        let dirs = SystemDirs::default();
+        // 没有文件、不存在、与新地址相同时不询问
+        assert!(previous_dir(&old, &new, &data, &dirs).is_none());
+        assert!(previous_dir(&root.path().join("missing"), &new, &data, &dirs).is_none());
+        fs::write(old.join("a.png"), b"abc").unwrap();
+        assert!(previous_dir(&old, &old, &data, &dirs).is_none());
+        let prev = previous_dir(&old, &new, &data, &dirs).unwrap();
+        assert_eq!(
+            (prev.files, prev.bytes, prev.blocked, prev.keep_source),
+            (1, 3, None, false)
+        );
+        assert_eq!(check_migration(&old, &new, &data, &dirs), Ok(false));
+        // 新地址在原地址内，或原地址在新地址内，都拒绝迁移
+        let inner = old.join("inner");
+        fs::create_dir_all(&inner).unwrap();
+        let outer = root.path().join("outer");
+        let old2 = outer.join("old2");
+        fs::create_dir_all(&old2).unwrap();
+        fs::write(old2.join("b.png"), b"b").unwrap();
+        assert_eq!(
+            previous_dir(&old, &inner, &data, &dirs).unwrap().blocked,
+            Some(NESTED)
+        );
+        assert_eq!(
+            previous_dir(&old2, &outer, &data, &dirs).unwrap().blocked,
+            Some(NESTED)
+        );
+        assert_eq!(
+            check_migration(&old, &inner, &data, &dirs).unwrap_err(),
+            NESTED
+        );
+        assert_eq!(
+            check_migration(&old2, &outer, &data, &dirs).unwrap_err(),
+            NESTED
+        );
+        assert_eq!(
+            check_migration(&old, &old, &data, &dirs).unwrap_err(),
+            NESTED
+        );
+        // 原地址是数据目录的上级（例如安装目录）：拒绝，且不遍历统计
+        let prev = previous_dir(root.path(), &new, &data, &dirs).unwrap();
+        assert_eq!((prev.blocked, prev.files), (Some(CONTAINS_DATA), 0));
+        assert_eq!(
+            check_migration(root.path(), &new, &data, &dirs).unwrap_err(),
+            CONTAINS_DATA
+        );
+        // 数据目录内的位置不参与迁移
+        assert_eq!(
+            check_migration(&old, &data.join("images"), &data, &dirs).unwrap_err(),
+            IN_DATA_DIR
+        );
+        fs::write(data.join("x.png"), b"x").unwrap();
+        assert!(previous_dir(&data, &new, &data, &dirs).is_none());
+        // 用户主目录及其上级拒绝；已知文件夹可以迁移，但保留文件夹本身
+        let sys = SystemDirs {
+            protected: vec![normalize(&old)],
+            known: vec![normalize(&old2)],
+        };
+        assert_eq!(
+            previous_dir(&old, &new, &data, &sys).unwrap().blocked,
+            Some(SYSTEM_DIR)
+        );
+        assert_eq!(
+            check_migration(&old, &new, &data, &sys).unwrap_err(),
+            SYSTEM_DIR
+        );
+        let prev = previous_dir(&old2, &new, &data, &sys).unwrap();
+        assert_eq!((prev.blocked, prev.keep_source), (None, true));
+        assert_eq!(check_migration(&old2, &new, &data, &sys), Ok(true));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn blocks_drive_roots_and_home_ancestors() {
+        let dirs = SystemDirs {
+            protected: vec![
+                PathBuf::from(r"C:\Users\me"),
+                PathBuf::from(r"C:\Users\me\AppData\Roaming"),
+                PathBuf::from(r"C:\Users\me\AppData\Local"),
+            ],
+            known: vec![PathBuf::from(r"D:\Shell\Pictures")],
+        };
+        let data = Path::new(r"D:\Apps\GIP\data");
+        let to = Path::new(r"E:\新地址");
+        for from in [
+            r"C:\",
+            r"D:\",
+            r"\\?\C:\",
+            r"C:\Users",
+            r"C:\Users\me",
+            r"C:\Users\me\AppData",
+            r"C:\Users\me\AppData\Local",
+            r"D:\Shell",
+        ] {
+            assert_eq!(
+                migration_block(Path::new(from), to, data, &dirs),
+                Some(SYSTEM_DIR),
+                "{from}"
+            );
+        }
+        for from in [r"D:\Apps", r"D:\Apps\GIP"] {
+            assert_eq!(
+                migration_block(Path::new(from), to, data, &dirs),
+                Some(CONTAINS_DATA),
+                "{from}"
+            );
+        }
+        for from in [
+            r"C:\Users\me\Pictures",
+            r"D:\Apps\GIP\downloads",
+            r"D:\图片",
+            r"D:\Shell\Pictures",
+            r"C:\Users\me\AppData\Local\Temp\x",
+        ] {
+            assert_eq!(
+                migration_block(Path::new(from), to, data, &dirs),
+                None,
+                "{from}"
+            );
+        }
     }
 
     #[test]

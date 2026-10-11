@@ -1,14 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getStorageInfo, openStorageDir, type StorageInfo } from '../../lib/dbTauri'
+import { formatBytes } from '../../lib/formatBytes'
 import { useStore } from '../../store'
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  const idx = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
-  const value = bytes / 1024 ** idx
-  return `${value.toFixed(value < 10 ? 2 : 1)} ${units[idx]}`
-}
 
 /** 仅客户端：显示本地数据目录与占用空间 */
 export default function StorageInfoSection() {

@@ -4,13 +4,15 @@ const invoke = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => true, invoke }))
 
-import { saveFile, saveFileToDir } from './saveFile'
+import { pickSaveDir, saveFile, saveFileToDir, setBeforeSave, setSaveToDefaultDir } from './saveFile'
 
 const MB = 1024 * 1024
 
 describe('saveFile（客户端）', () => {
   beforeEach(() => {
     invoke.mockReset()
+    setBeforeSave(null)
+    setSaveToDefaultDir(false)
   })
 
   it('分块写入临时文件后提交，每块不超过 8 MB', async () => {
@@ -58,5 +60,28 @@ describe('saveFile（客户端）', () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'save_dir_begin' ? 1 : 'D:\\out\\empty.txt'))
     expect(await saveFileToDir({ token: 0, path: 'D:\\out' }, new Uint8Array(0), 'empty.txt')).toBe('D:\\out\\empty.txt')
     expect(invoke.mock.calls.map((c) => c[0])).toEqual(['save_dir_begin', 'save_commit'])
+  })
+
+  it('首次保存询问被取消时不弹保存对话框，也不写入', async () => {
+    setBeforeSave(async () => false)
+    expect(await saveFile(new Blob(['x']), 'a.png')).toBeNull()
+    expect(await pickSaveDir()).toBeNull()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('首次保存询问后按所选方式继续本次保存', async () => {
+    setBeforeSave(async () => {
+      setSaveToDefaultDir(true)
+      return true
+    })
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'download_dir_use') return { token: 2, path: 'D:\\out' }
+      if (cmd === 'save_dir_begin') return 5
+      if (cmd === 'save_commit') return 'D:\\out\\a.png'
+      return null
+    })
+    expect(await saveFile(new Blob(['x']), 'a.png')).toBe('D:\\out\\a.png')
+    expect(invoke.mock.calls.map((c) => c[0])).toEqual(['download_dir_use', 'save_dir_begin', 'save_write', 'save_commit'])
+    expect(await pickSaveDir()).toEqual({ token: 2, path: 'D:\\out' })
   })
 })

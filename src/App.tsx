@@ -9,6 +9,7 @@ import { useAppFonts } from './hooks/useAppFonts'
 import { useCloseConfirm } from './hooks/useCloseConfirm'
 import { promptImportLink, useImportLinks } from './hooks/useImportLinks'
 import { useAutoUpdateCheck } from './hooks/useReleaseUpdates'
+import { useSaveLocationPrompt } from './hooks/useSaveLocationPrompt'
 import Header from './components/Header'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
@@ -46,6 +47,7 @@ export default function App() {
   useAppFonts()
   useGlobalClickSuppression()
   useCloseConfirm()
+  useSaveLocationPrompt()
   useAutoUpdateCheck(autoCheckUpdate)
   // 运行中的链接导入要等启动时的预置配置写入完，否则会被启动流程覆盖
   useImportLinks(startupImportDone)

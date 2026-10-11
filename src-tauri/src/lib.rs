@@ -1,6 +1,7 @@
 mod diagnostics;
 mod files;
 mod http;
+mod migrate;
 mod storage;
 mod update;
 
@@ -65,6 +66,7 @@ pub fn run() {
             files::download_dir_pick,
             files::download_dir_use,
             files::download_dir_open,
+            files::download_dir_migrate,
             http::http_send,
             http::http_read,
             http::http_cancel,
@@ -75,6 +77,7 @@ pub fn run() {
         ])
         .manage(files::SaveDirs::default())
         .manage(files::Writes::default())
+        .manage(files::MigrateSource::default())
         .manage(http::Requests::default())
         // 页面重载（含开发时的热重载）后旧页面的请求已无人读取，立即断开；未提交的保存也无人继续，删除临时文件
         .on_page_load(|webview, payload| {

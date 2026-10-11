@@ -182,7 +182,7 @@ export default function ConfirmDialog() {
               disabled={!canConfirm || isSubmitting}
               className={`flex-1 py-2 rounded-xl text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${confirmClassName}`}
             >
-              {confirmText}
+              {isSubmitting && confirmDialog.busyText ? confirmDialog.busyText : confirmText}
             </button>
           </div>
         )}

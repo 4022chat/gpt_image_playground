@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import type { AppSettings } from '../../types'
+import { markSaveLocationAsked } from '../../hooks/useSaveLocationPrompt'
 import { isTauri } from '../../lib/platform'
-import { changeDefaultSaveDir, getDefaultSaveDir, openDefaultSaveDir } from '../../lib/saveFile'
+import { getDefaultSaveDir, openDefaultSaveDir } from '../../lib/saveFile'
 import { openTauriLogDir } from '../../lib/tauriLog'
 import { useStore } from '../../store'
 import Select from '../Select'
 import FontSettingField from './FontSettingField'
+import { changeSaveDirWithMigration } from './saveDirMigration'
 
 interface GeneralSettingsTabProps {
   draft: AppSettings
@@ -35,7 +37,7 @@ export default function GeneralSettingsTab({
 
   const handleChangeDefaultSaveDir = async () => {
     try {
-      const dir = await changeDefaultSaveDir()
+      const dir = await changeSaveDirWithMigration()
       if (dir) setDefaultSaveDir(dir)
     } catch (err) {
       console.error('更改默认保存地址失败：', err)
@@ -296,7 +298,10 @@ export default function GeneralSettingsTab({
                 <div className="w-28 shrink-0">
                   <Select
                     value={draft.saveLocationMode}
-                    onChange={(val) => commitSettings({ ...draft, saveLocationMode: val as AppSettings['saveLocationMode'] })}
+                    onChange={(val) => {
+                      markSaveLocationAsked()
+                      commitSettings({ ...draft, saveLocationMode: val as AppSettings['saveLocationMode'] })
+                    }}
                     options={[
                       { label: '每次询问', value: 'ask' },
                       { label: '默认地址', value: 'default' },

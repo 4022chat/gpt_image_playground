@@ -14,6 +14,13 @@ export function setSaveToDefaultDir(enabled: boolean) {
   saveToDefaultDir = enabled
 }
 
+// 客户端首次保存前询问保存方式，由 App 注册；返回 false 表示用户取消了本次保存
+let beforeSave: (() => Promise<boolean>) | null = null
+
+export function setBeforeSave(fn: (() => Promise<boolean>) | null) {
+  beforeSave = fn
+}
+
 function triggerDownload(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -58,6 +65,7 @@ export async function saveFile(data: Blob | Uint8Array, fileName: string): Promi
     triggerDownload(data instanceof Blob ? data : new Blob([data as BlobPart]), fileName)
     return fileName
   }
+  if (beforeSave && !(await beforeSave())) return null
   if (saveToDefaultDir) return await saveFileToDir(await invoke<SaveDir>('download_dir_use'), data, fileName)
   const id = await invoke<number | null>('save_file', { name: fileName })
   if (id === null) return null
@@ -68,8 +76,9 @@ export async function saveFile(data: Blob | Uint8Array, fileName: string): Promi
  * 仅客户端：弹出目录选择框，用于一次保存多个文件；用户取消时返回 null。
  * “默认地址”模式下不弹框，直接返回默认保存地址，地址不可用时抛出 Rust 给出的原因
  */
-export function pickSaveDir() {
-  return invoke<SaveDir | null>(saveToDefaultDir ? 'download_dir_use' : 'save_dir_pick')
+export async function pickSaveDir() {
+  if (beforeSave && !(await beforeSave())) return null
+  return await invoke<SaveDir | null>(saveToDefaultDir ? 'download_dir_use' : 'save_dir_pick')
 }
 
 /** 仅客户端：写入 pickSaveDir 选定的目录，已有同名文件时自动加序号，返回实际写入的完整路径 */
@@ -82,9 +91,41 @@ export function getDefaultSaveDir() {
   return invoke<string>('download_dir_get')
 }
 
-/** 仅客户端：弹出目录选择框更改默认保存地址，返回新地址；用户取消时返回 null */
+/** 更改默认保存地址前的原地址：有文件或不能迁移时才返回 */
+export interface PreviousSaveDir {
+  path: string
+  files: number
+  bytes: number
+  /** 不能迁移的原因（互相包含、包含数据目录、磁盘根目录或用户主目录等） */
+  blocked: string | null
+  /** 系统已知文件夹（下载、图片等），迁移后保留文件夹本身 */
+  keepSource: boolean
+}
+
+/** 仅客户端：弹出目录选择框更改默认保存地址，返回新地址及原地址的统计；用户取消时返回 null */
 export function changeDefaultSaveDir() {
-  return invoke<string | null>('download_dir_pick')
+  return invoke<{ path: string, previous: PreviousSaveDir | null } | null>('download_dir_pick')
+}
+
+/** 未能完整移动的条目：原位置的完整路径与原因 */
+export interface MoveIssue {
+  path: string
+  error: string
+}
+
+export interface MoveReport {
+  moved: number
+  renamed: number
+  /** 未能移动的条目及原因，仍留在原地址 */
+  failed: MoveIssue[]
+  /** 已复制到新地址、但原位置未能删除的条目及原因 */
+  notRemoved: MoveIssue[]
+  sourceRemoved: boolean
+}
+
+/** 仅客户端：把上次更改前的原地址中的全部内容移动到当前默认保存地址 */
+export function migrateDefaultSaveDir() {
+  return invoke<MoveReport>('download_dir_migrate')
 }
 
 /** 仅客户端：在资源管理器中打开默认保存地址 */

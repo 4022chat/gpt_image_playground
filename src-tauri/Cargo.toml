@@ -37,3 +37,5 @@ semver = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-registry = "0.6"
+# 迁移默认保存地址：不替换已有目标的 MoveFileExW、保留修改时间与属性的 CopyFileExW
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }

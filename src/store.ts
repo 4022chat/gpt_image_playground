@@ -448,6 +448,8 @@ interface AppState {
     messageAlign?: 'left' | 'center'
     tone?: 'danger' | 'warning'
     awaitAction?: boolean
+    /** awaitAction 执行期间确认按钮显示的文字 */
+    busyText?: string
     action?: (checkboxChecked?: boolean) => void | boolean | Promise<void | boolean>
     cancelAction?: (checkboxChecked?: boolean) => void
   } | null
