@@ -45,6 +45,7 @@ pub fn run() {
             storage::commands::image_delete,
             storage::commands::images_clear,
             storage::commands::image_ids,
+            storage::commands::image_stats,
             storage::commands::thumbnail_get,
             storage::commands::thumbnail_put,
             storage::commands::kv_get_all,

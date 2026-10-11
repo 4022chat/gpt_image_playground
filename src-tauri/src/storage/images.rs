@@ -47,6 +47,18 @@ pub struct FileMeta {
     pub thumbnail_version: Option<i64>,
 }
 
+/// image_stats 的单项
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageStat {
+    pub id: String,
+    pub bytes: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub thumbnail_bytes: Option<i64>,
+    pub thumbnail_version: Option<i64>,
+}
+
 /// 文件名（不含扩展名）。只有前端生成的两种 id 格式直接使用：SHA-256（64 位小写十六进制）
 /// 和 hashDataUrlFallback 的 fallback-<16 位小写十六进制>。其他 id（例如外部备份中的任意字符串）
 /// 改用 h-<sha256>。这样所有文件名和分桶目录都是小写，避免 NTFS 不区分大小写导致的撞名和误删，
@@ -282,6 +294,47 @@ impl Storage {
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(ids)
+    }
+
+    /// 每张原图的大小与缩略图信息，供导出估算分卷和启动时筛选需要补全缩略图的图片，不读取文件内容。
+    /// 缩略图表没有大小列，逐个读取文件元数据；文件缺失时视为没有缩略图
+    pub fn image_stats(&self) -> Result<Vec<ImageStat>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT i.id, i.bytes, i.width, i.height, t.file, t.version
+             FROM images i LEFT JOIN thumbnails t ON t.id = i.id ORDER BY i.id",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        // 读取文件元数据不需要持有数据库锁
+        drop(stmt);
+        drop(conn);
+        Ok(rows
+            .into_iter()
+            .map(|(id, bytes, width, height, file, version)| {
+                let thumbnail_bytes = file
+                    .and_then(|file| fs::metadata(self.root.join(file)).ok())
+                    .map(|m| m.len() as i64);
+                ImageStat {
+                    id,
+                    bytes,
+                    width,
+                    height,
+                    thumbnail_version: version.filter(|_| thumbnail_bytes.is_some()),
+                    thumbnail_bytes,
+                }
+            })
+            .collect())
     }
 
     /// 同时删除原图和缩略图：先在一个事务中删除记录，再删文件。
@@ -711,6 +764,56 @@ mod tests {
             let name = entry.file_name().to_string_lossy().into_owned();
             assert_eq!(name, name.to_lowercase());
         }
+    }
+
+    #[test]
+    fn image_stats_reports_sizes_without_reading_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path()).unwrap();
+        let other = "cd00000000000000000000000000000000000000000000000000000000000002";
+        storage
+            .put_file(Kind::Image, &meta(ID, "image/png"), b"12345")
+            .unwrap();
+        storage
+            .put_file(Kind::Image, &meta(other, "image/png"), b"123")
+            .unwrap();
+        let thumb = FileMeta {
+            thumbnail_version: Some(2),
+            ..meta(ID, "image/webp")
+        };
+        storage.put_file(Kind::Thumbnail, &thumb, b"ab").unwrap();
+        let stats = storage.image_stats().unwrap();
+        assert_eq!(stats.len(), 2);
+        assert_eq!(
+            (
+                stats[0].id.as_str(),
+                stats[0].bytes,
+                stats[0].thumbnail_bytes,
+                stats[0].thumbnail_version
+            ),
+            (ID, 5, Some(2), Some(2))
+        );
+        assert_eq!((stats[0].width, stats[0].height), (Some(10), Some(20)));
+        assert_eq!(
+            (
+                stats[1].bytes,
+                stats[1].thumbnail_bytes,
+                stats[1].thumbnail_version
+            ),
+            (3, None, None)
+        );
+
+        // 缩略图文件缺失时按没有缩略图处理
+        let file: String = storage
+            .lock()
+            .query_row("SELECT file FROM thumbnails", [], |row| row.get(0))
+            .unwrap();
+        fs::remove_file(storage.root.join(file)).unwrap();
+        let stats = storage.image_stats().unwrap();
+        assert_eq!(
+            (stats[0].thumbnail_bytes, stats[0].thumbnail_version),
+            (None, None)
+        );
     }
 
     #[test]

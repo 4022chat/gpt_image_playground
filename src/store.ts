@@ -39,7 +39,6 @@ import {
   clearAgentConversations as dbClearAgentConversations,
   getImage,
   getStoredImageThumbnail,
-  getImageThumbnail,
   getAllImageIds,
   putImage,
   putImageThumbnail,
@@ -62,10 +61,11 @@ import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompati
 import { runWithConcurrency, splitBatchPrompts } from './lib/batchPrompts'
 import { createTransparentOutputMeta, getTransparentRequestParams, removeKeyedBackgroundFromDataUrl } from './lib/transparentImage'
 import { blobToDataUrl, fileToDataUrl } from './lib/dataUrl'
-import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureImageCached, scheduleThumbnailBackfill } from './lib/imageCache'
+import { cacheImage, cacheThumbnail, clearImageCaches, deleteCachedImage, deleteImageCacheEntry, ensureImageCached, scheduleMissingThumbnailBackfill } from './lib/imageCache'
 import { hasActiveDataOperations, isCustomRecoverableTask, isFalRecoverableTask } from './lib/dataOperations'
 import { formatExportFileTime } from './lib/exportFileName'
-import { buildExportZip, createExportBlob, getExportImageEstimatedBytes, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
+import { buildExportZip, createExportBlob, getExportZipPlan, MAX_EXPORT_ZIP_BYTES, readExportZip, readExportZipFileAsDataUrl, readExportZipManifest } from './lib/exportZip'
+import { getExportImageSizes, readExportImages } from './lib/exportImages'
 import { deleteAgentRoundFromConversation, getActiveAgentRounds, getAgentRoundPath, normalizeAgentConversations, remapAgentRoundMentionsForPathChange, uniqueIds } from './lib/agentConversationState'
 import { canonicalizeBatchFunctionCallArguments, countResponseToolCalls, createReadyAgentRecoveredToolState, getAgentFunctionOutputCallIds, getAgentRecoveredFailureError, getAgentRecoveredToolCallCount, getPersistableAgentConversations, getPersistableRawResponsePayload, mergeResponseOutputItems, scrubResponseOutputForDeletedAgentTasks, scrubTaskRawResponsePayloadForDeletedTasks } from './lib/agentResponseState'
 import { cleanStaleAgentInputDrafts, clearInputDraftState, isEmptyAgentInputDraft, normalizeAgentInputDrafts, remapAgentInputDraftMentionsForPathChange, restoreAgentInputDraftState, restoreGalleryInputDraftState, saveActiveAgentInputDrafts, saveGalleryInputDraft, syncActiveInputDraft, updateInputDraftImages } from './lib/inputDraftState'
@@ -507,7 +507,7 @@ async function deleteStoredImageIfUnreferenced(imageId: string) {
   if (thumbnail) {
     await putImageThumbnail(thumbnail)
     cacheThumbnail(thumbnail.id, {
-      dataUrl: thumbnail.thumbnailDataUrl,
+      src: thumbnail.thumbnailDataUrl,
       width: thumbnail.width,
       height: thumbnail.height,
       thumbnailVersion: thumbnail.thumbnailVersion,
@@ -1580,7 +1580,7 @@ export async function initStore() {
       await deleteImage(imgId)
     }
   }
-  scheduleThumbnailBackfill(referencedImageIds)
+  void scheduleMissingThumbnailBackfill(referencedImageIds)
 
   const restoredInputImages: InputImage[] = []
   for (const img of persistedInputImages) {
@@ -4524,13 +4524,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       defaultFavoriteCollectionId,
       agentConversations: options.exportTasks ? getPersistableAgentConversations(agentConversations) : [],
     }
-    const imageSizes = []
-    for (const id of imageIds) {
-      const image = await getImage(id)
-      if (!image) continue
-      const thumbnail = await getImageThumbnail(id)
-      imageSizes.push({ id, bytes: getExportImageEstimatedBytes(image, thumbnail) })
-    }
+    const imageSizes = await getExportImageSizes(imageIds)
     const plan = getExportZipPlan(params, imageSizes)
     const backupId = `${exportedAt}`
     // 客户端分卷备份时先选择目录，一次写入全部分卷，替代浏览器的多文件下载
@@ -4539,22 +4533,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     let savedPath = ''
 
     for (let index = 0; index < plan.length; index++) {
-      const images: StoredImage[] = []
-      const thumbnailsByImageId = new Map<string, StoredImageThumbnail>()
-      for (const id of plan[index].imageIds) {
-        const image = await getImage(id)
-        if (!image) continue
-        images.push(image)
-        const thumbnail = await getImageThumbnail(id)
-        if (!thumbnail?.thumbnailDataUrl) continue
-        thumbnailsByImageId.set(id, thumbnail)
-        cacheThumbnail(id, {
-          dataUrl: thumbnail.thumbnailDataUrl,
-          width: thumbnail.width,
-          height: thumbnail.height,
-          thumbnailVersion: thumbnail.thumbnailVersion,
-        })
-      }
+      const { images, thumbnailsByImageId } = await readExportImages(plan[index].imageIds)
 
       const partNumber = index + 1
       const result = await buildExportZip({
@@ -4678,7 +4657,7 @@ export async function importData(input: File | File[], options: ImportOptions = 
             thumbnailVersion: info.thumbnailVersion,
           })
           cacheThumbnail(id, {
-            dataUrl: thumbnailDataUrl,
+            src: thumbnailDataUrl,
             width: info.width,
             height: info.height,
             thumbnailVersion: info.thumbnailVersion,
@@ -4723,7 +4702,7 @@ export async function importData(input: File | File[], options: ImportOptions = 
       })
       await replaceStoredAgentConversations(useStore.getState().agentConversations)
       skipSupportPromptForImportedData(tasks)
-      scheduleThumbnailBackfill(importedImageIds)
+      void scheduleMissingThumbnailBackfill(importedImageIds)
     }
 
     if (options.importConfig && settingsManifests.length) {

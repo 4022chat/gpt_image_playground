@@ -22,6 +22,7 @@ import {
 
 describe('imageCache', () => {
   beforeEach(() => {
+    URL.revokeObjectURL = vi.fn()
     clearImageCaches()
     vi.clearAllMocks()
     db.getImage.mockResolvedValue(undefined)
@@ -41,15 +42,15 @@ describe('imageCache', () => {
     expect(getCachedImage('image-1')).toBeUndefined()
     expect(getCachedImage('image-0')).toBe('data-0')
 
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 200; i++) {
       cacheThumbnail(`thumbnail-${i}`, {
-        dataUrl: `thumbnail-data-${i}`,
+        src: `thumbnail-data-${i}`,
         thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
       })
     }
-    await expect(ensureImageThumbnailCached('thumbnail-0')).resolves.toMatchObject({ dataUrl: 'thumbnail-data-0' })
-    cacheThumbnail('thumbnail-80', {
-      dataUrl: 'thumbnail-data-80',
+    await expect(ensureImageThumbnailCached('thumbnail-0')).resolves.toMatchObject({ src: 'thumbnail-data-0' })
+    cacheThumbnail('thumbnail-200', {
+      src: 'thumbnail-data-200',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
     db.getStoredFreshImageThumbnail.mockResolvedValue({
@@ -57,13 +58,42 @@ describe('imageCache', () => {
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
 
-    await expect(ensureImageThumbnailCached('thumbnail-1')).resolves.toMatchObject({ dataUrl: 'stored-thumbnail' })
+    await expect(ensureImageThumbnailCached('thumbnail-1')).resolves.toMatchObject({ src: 'stored-thumbnail' })
     expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledWith('thumbnail-1')
+  })
+
+  it('keeps thumbnails in use and revokes blob URLs only after the last user leaves', () => {
+    const revoke = vi.fn()
+    URL.revokeObjectURL = revoke
+    const version = db.CURRENT_THUMBNAIL_VERSION
+    const releaseA = subscribeImageThumbnail('shown', () => {})
+    const releaseB = subscribeImageThumbnail('shown', () => {})
+    cacheThumbnail('shown', { src: 'blob:shown', thumbnailVersion: version })
+    for (let i = 0; i < 200; i++) cacheThumbnail(`other-${i}`, { src: `blob:other-${i}`, thumbnailVersion: version })
+
+    // 最久未用但正在显示的项被跳过，淘汰下一个
+    expect(revoke.mock.calls).toEqual([['blob:other-0']])
+
+    // 显示中被替换或删除，推迟到最后一个使用者离开再撤销
+    cacheThumbnail('shown', { src: 'blob:shown-2', thumbnailVersion: version })
+    deleteImageCacheEntry('shown')
+    releaseA()
+    releaseA()
+    expect(revoke).not.toHaveBeenCalledWith('blob:shown')
+    releaseB()
+    expect(revoke).toHaveBeenCalledWith('blob:shown')
+    expect(revoke).toHaveBeenCalledWith('blob:shown-2')
+    expect(revoke).toHaveBeenCalledTimes(3)
+
+    // dataUrl 不需要撤销
+    cacheThumbnail('data', { src: 'data:image/webp;base64,AA==', thumbnailVersion: version })
+    clearImageCaches()
+    expect(revoke).not.toHaveBeenCalledWith('data:image/webp;base64,AA==')
   })
 
   it('only caches thumbnails from the current version', async () => {
     cacheThumbnail('image', {
-      dataUrl: 'stale-thumbnail',
+      src: 'stale-thumbnail',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION - 1,
     })
     db.getStoredFreshImageThumbnail.mockResolvedValue({
@@ -74,7 +104,7 @@ describe('imageCache', () => {
     })
 
     await expect(ensureImageThumbnailCached('image')).resolves.toEqual({
-      dataUrl: 'fresh-thumbnail',
+      src: 'fresh-thumbnail',
       width: 640,
       height: 480,
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
@@ -89,7 +119,7 @@ describe('imageCache', () => {
   it('deletes individual entries and clears both caches', async () => {
     cacheImage('deleted', 'deleted-data')
     cacheThumbnail('deleted', {
-      dataUrl: 'deleted-thumbnail',
+      src: 'deleted-thumbnail',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
     deleteImageCacheEntry('deleted')
@@ -100,13 +130,13 @@ describe('imageCache', () => {
 
     expect(getCachedImage('deleted')).toBeUndefined()
     await expect(ensureImageThumbnailCached('deleted')).resolves.toMatchObject({
-      dataUrl: 'stored-deleted-thumbnail',
+      src: 'stored-deleted-thumbnail',
     })
     expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledWith('deleted')
 
     cacheImage('cleared', 'cleared-data')
     cacheThumbnail('cleared', {
-      dataUrl: 'cleared-thumbnail',
+      src: 'cleared-thumbnail',
       thumbnailVersion: db.CURRENT_THUMBNAIL_VERSION,
     })
     clearImageCaches()
@@ -118,7 +148,7 @@ describe('imageCache', () => {
 
     expect(getCachedImage('cleared')).toBeUndefined()
     await expect(ensureImageThumbnailCached('cleared')).resolves.toMatchObject({
-      dataUrl: 'stored-cleared-thumbnail',
+      src: 'stored-cleared-thumbnail',
     })
     expect(db.getStoredFreshImageThumbnail).toHaveBeenCalledWith('cleared')
   })
@@ -143,7 +173,7 @@ describe('imageCache', () => {
     expect(db.getImage.mock.calls.map(([id]) => id)).toEqual(['visible', 'background'])
     expect(db.getImageThumbnail.mock.calls.map(([id]) => id)).toEqual(['visible', 'background'])
     expect(onThumbnail).toHaveBeenCalledWith({
-      dataUrl: 'visible-thumbnail',
+      src: 'visible-thumbnail',
       width: 1000,
       height: 1000,
     })

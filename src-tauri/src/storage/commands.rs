@@ -9,8 +9,8 @@ use tauri::State;
 
 use super::images::encode_file;
 use super::{
-    Doc, FileMeta, Kind, Result, Storage, StorageError, StorageInfo, StorageState, CONVERSATIONS,
-    TASKS,
+    Doc, FileMeta, ImageStat, Kind, Result, Storage, StorageError, StorageInfo, StorageState,
+    CONVERSATIONS, TASKS,
 };
 
 const SOURCES: [&str; 3] = ["upload", "generated", "mask"];
@@ -164,6 +164,11 @@ pub async fn images_clear(state: State<'_, StorageState>) -> Result<()> {
 #[tauri::command]
 pub async fn image_ids(state: State<'_, StorageState>) -> Result<Vec<String>> {
     run(state, |s| s.image_ids()).await
+}
+
+#[tauri::command]
+pub async fn image_stats(state: State<'_, StorageState>) -> Result<Vec<ImageStat>> {
+    run(state, |s| s.image_stats()).await
 }
 
 #[tauri::command]

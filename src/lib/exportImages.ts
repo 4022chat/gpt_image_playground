@@ -1,0 +1,102 @@
+import type { StoredImage, StoredImageThumbnail } from '../types'
+import { CURRENT_THUMBNAIL_VERSION, getImage, getImageThumbnail } from './db'
+import { getImageFile, getImageStats, getThumbnailFile } from './dbTauri'
+import { getExportFileEstimatedBytes, getExportImageEstimatedBytes, type ExportImageFile, type ExportImageSize, type ExportThumbnailFile } from './exportZip'
+import { cacheThumbnail } from './imageCache'
+import { isTauri } from './platform'
+
+// 网页版 dataUrlToBytes 只从 data:image/<单词>;base64 推出扩展名，其他情况一律为 png 且解码方式不同。
+// 客户端只对这种 mime 直接使用文件二进制，其余回退到 dataUrl，保证 ZIP 内容与网页版完全一致
+const SIMPLE_IMAGE_MIME = /^image\/(\w+)$/
+
+/** 估算每张图片在备份中的大小：客户端只查询文件大小；网页版需读出原图和缩略图（缺失的缩略图会顺带补全） */
+export async function getExportImageSizes(imageIds: string[]): Promise<ExportImageSize[]> {
+  if (isTauri) {
+    const ids = new Set(imageIds)
+    return (await getImageStats())
+      .filter((stat) => ids.has(stat.id))
+      .map((stat) => ({
+        id: stat.id,
+        bytes: getExportFileEstimatedBytes(stat.bytes, stat.thumbnailVersion === CURRENT_THUMBNAIL_VERSION ? stat.thumbnailBytes ?? undefined : undefined),
+      }))
+  }
+
+  const sizes: ExportImageSize[] = []
+  for (const id of imageIds) {
+    const image = await getImage(id)
+    if (!image) continue
+    const thumbnail = await getImageThumbnail(id)
+    sizes.push({ id, bytes: getExportImageEstimatedBytes(image, thumbnail) })
+  }
+  return sizes
+}
+
+/**
+ * 读取一批要导出的原图和缩略图，按传入顺序排列（ZIP 内容依赖顺序）。客户端直接取文件二进制、8 张一批并发读取；
+ * 网页版逐张读取。缩略图缺失或过期时与网页版一样经 getImageThumbnail 重新生成，生成需解码原图，逐张执行
+ */
+export async function readExportImages(ids: string[]) {
+  const images: Array<StoredImage | ExportImageFile> = []
+  const thumbnailsByImageId = new Map<string, StoredImageThumbnail | ExportThumbnailFile>()
+  const batchSize = isTauri ? 8 : 1
+  for (let start = 0; start < ids.length; start += batchSize) {
+    const entries = await Promise.all(ids.slice(start, start + batchSize).map((id) => readExportImage(id)))
+    for (const entry of entries) {
+      if (!entry) continue
+      images.push(entry.image)
+      if (entry.thumbnail) {
+        thumbnailsByImageId.set(entry.image.id, entry.thumbnail)
+        continue
+      }
+      const thumbnail = await getImageThumbnail(entry.image.id)
+      if (!thumbnail?.thumbnailDataUrl) continue
+      thumbnailsByImageId.set(entry.image.id, thumbnail)
+      cacheThumbnail(entry.image.id, {
+        src: thumbnail.thumbnailDataUrl,
+        width: thumbnail.width,
+        height: thumbnail.height,
+        thumbnailVersion: thumbnail.thumbnailVersion,
+      })
+    }
+  }
+  return { images, thumbnailsByImageId }
+}
+
+/** 读取原图；客户端顺带读取可直接使用的缩略图二进制，返回的 thumbnail 为空表示需要 getImageThumbnail */
+async function readExportImage(id: string): Promise<{ image: StoredImage | ExportImageFile; thumbnail?: ExportThumbnailFile } | undefined> {
+  if (!isTauri) {
+    const image = await getImage(id)
+    return image && { image }
+  }
+
+  const file = await getImageFile(id)
+  if (!file) return undefined
+  const ext = SIMPLE_IMAGE_MIME.exec(file.meta.mime)?.[1]
+  const image = ext
+    ? {
+      id,
+      ext,
+      bytes: file.bytes,
+      createdAt: file.meta.createdAt ?? undefined,
+      source: file.meta.source ?? undefined,
+      width: file.meta.width ?? undefined,
+      height: file.meta.height ?? undefined,
+    }
+    : await getImage(id)
+  if (!image) return undefined
+
+  const thumbnailFile = await getThumbnailFile(id)
+  const thumbnailExt = thumbnailFile && SIMPLE_IMAGE_MIME.exec(thumbnailFile.meta.mime)?.[1]
+  if (!thumbnailFile || !thumbnailExt || thumbnailFile.meta.thumbnailVersion !== CURRENT_THUMBNAIL_VERSION) return { image }
+  return {
+    image,
+    thumbnail: {
+      id,
+      ext: thumbnailExt,
+      bytes: thumbnailFile.bytes,
+      width: thumbnailFile.meta.width ?? undefined,
+      height: thumbnailFile.meta.height ?? undefined,
+      thumbnailVersion: thumbnailFile.meta.thumbnailVersion,
+    },
+  }
+}

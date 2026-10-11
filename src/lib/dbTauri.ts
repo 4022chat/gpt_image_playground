@@ -3,7 +3,7 @@ import type { AgentConversation, TaskRecord, StoredImage, StoredImageThumbnail }
 import { base64ToBytes, bytesToBase64 } from './dataUrl'
 
 // 与 src-tauri/src/storage/images.rs 中的 RAW_DATA_URL_MIME 保持一致
-const RAW_DATA_URL_MIME = 'text/x-data-url'
+export const RAW_DATA_URL_MIME = 'text/x-data-url'
 
 type FileMeta = {
   mime: string
@@ -54,12 +54,12 @@ export function payloadToDataUrl(mime: string, bytes: Uint8Array): string {
 }
 
 /** 响应格式：4 字节小端 JSON 长度 + 元数据 JSON + 文件内容；空响应表示不存在 */
-function decodeFile(res: ArrayBuffer): { meta: FileMeta; dataUrl: string } | undefined {
+function decodeFile(res: ArrayBuffer): { meta: FileMeta; bytes: Uint8Array } | undefined {
   const buf = new Uint8Array(res)
   if (!buf.length) return undefined
   const len = new DataView(buf.buffer, buf.byteOffset, buf.byteLength).getUint32(0, true)
   const meta = JSON.parse(new TextDecoder().decode(buf.subarray(4, 4 + len))) as FileMeta
-  return { meta, dataUrl: payloadToDataUrl(meta.mime, buf.subarray(4 + len)) }
+  return { meta, bytes: buf.subarray(4 + len) }
 }
 
 /** 元数据可能来自外部备份：非有限数值和未知 source 直接忽略；id 可能含任意字符，编码后再放进请求头 */
@@ -122,12 +122,36 @@ export async function replaceAgentConversations(conversations: AgentConversation
 
 // ===== Images =====
 
+/** 原图文件内容与元数据，不经过 base64，供导出等只需要二进制的场景使用 */
+export async function getImageFile(id: string) {
+  return decodeFile(await call<ArrayBuffer>('image_get', { id }))
+}
+
+/** 缩略图文件内容与元数据，不经过 base64，供显示和导出使用 */
+export async function getThumbnailFile(id: string) {
+  return decodeFile(await call<ArrayBuffer>('thumbnail_get', { id }))
+}
+
+/** 与 Rust 侧 ImageStat 对应：只查询记录和文件大小，不读取文件内容 */
+export type ImageStat = {
+  id: string
+  bytes: number
+  width: number | null
+  height: number | null
+  thumbnailBytes: number | null
+  thumbnailVersion: number | null
+}
+
+export function getImageStats(): Promise<ImageStat[]> {
+  return call('image_stats')
+}
+
 export async function getImage(id: string): Promise<StoredImage | undefined> {
-  const file = decodeFile(await call<ArrayBuffer>('image_get', { id }))
+  const file = await getImageFile(id)
   if (!file) return undefined
   return {
     id,
-    dataUrl: file.dataUrl,
+    dataUrl: payloadToDataUrl(file.meta.mime, file.bytes),
     createdAt: file.meta.createdAt ?? undefined,
     source: file.meta.source ?? undefined,
     width: file.meta.width ?? undefined,
@@ -136,11 +160,11 @@ export async function getImage(id: string): Promise<StoredImage | undefined> {
 }
 
 export async function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
-  const file = decodeFile(await call<ArrayBuffer>('thumbnail_get', { id }))
+  const file = await getThumbnailFile(id)
   if (!file) return undefined
   return {
     id,
-    thumbnailDataUrl: file.dataUrl,
+    thumbnailDataUrl: payloadToDataUrl(file.meta.mime, file.bytes),
     width: file.meta.width ?? undefined,
     height: file.meta.height ?? undefined,
     thumbnailVersion: file.meta.thumbnailVersion ?? undefined,
