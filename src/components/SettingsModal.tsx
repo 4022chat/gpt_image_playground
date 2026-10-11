@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { normalizeBaseUrl } from '../lib/api'
@@ -185,6 +185,9 @@ export default function SettingsModal() {
   const customProviderScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const zipDownloadRouteScrollBoundaryRef = useRef<HTMLDivElement>(null)
   const fontLicensesScrollBoundaryRef = useRef<HTMLDivElement>(null)
+  const tabScrollRef = useRef<HTMLDivElement>(null)
+  // 各选项卡共用一个滚动容器，按选项卡记录滚动位置，切换时各自恢复
+  const tabScrollTopsRef = useRef<Partial<Record<SettingsTab, number>>>({})
   
   const [draft, setDraft] = useState<AppSettings>(normalizeSettings(settings))
   const [timeoutInput, setTimeoutInput] = useState(String(getActiveApiProfile(settings).timeout))
@@ -323,6 +326,7 @@ export default function SettingsModal() {
   useEffect(() => {
     if (!showSettings) {
       wasSettingsOpenRef.current = false
+      tabScrollTopsRef.current = {}
       return
     }
     if (wasSettingsOpenRef.current) return
@@ -359,6 +363,10 @@ export default function SettingsModal() {
   useEffect(() => {
     if (showSettings && settingsTabRequest) setActiveTab(settingsTabRequest)
   }, [settingsTabRequest, showSettings])
+
+  useLayoutEffect(() => {
+    if (tabScrollRef.current) tabScrollRef.current.scrollTop = tabScrollTopsRef.current[activeTab] ?? 0
+  }, [activeTab, showSettings])
 
   const updateProfileMenuMaxHeight = useCallback(() => {
     if (!profileMenuTriggerRef.current) return
@@ -1224,7 +1232,11 @@ export default function SettingsModal() {
 
           {/* Content */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-transparent relative overflow-hidden">
-            <div className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-5 sm:p-6">
+            <div
+              ref={tabScrollRef}
+              onScroll={(e) => { tabScrollTopsRef.current[activeTab] = e.currentTarget.scrollTop }}
+              className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-5 sm:p-6"
+            >
             {activeTab === 'general' && (
               <GeneralSettingsTab
                 draft={draft}
