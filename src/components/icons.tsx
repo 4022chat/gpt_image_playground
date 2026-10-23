@@ -137,6 +137,14 @@ export function LinkIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function ExternalLinkIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+    </svg>
+  )
+}
+
 export function GithubIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
@@ -187,6 +195,16 @@ export function InstallIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function DesktopDownloadIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" {...props}>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+      <path d="M12 6.5v6M9 9.5l3 3 3-3" />
+    </svg>
+  )
+}
+
 export function HelpCircleIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" {...props}>
@@ -233,3 +251,11 @@ export function TransparentBgIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+
+export function SketchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.53 16.12a3 3 0 00-5.78 1.13 2.25 2.25 0 01-2.4 2.25 4.5 4.5 0 008.4-2.25c0-.4-.08-.78-.22-1.13zm0 0a15.998 15.998 0 003.39-1.62m-5.04-.03a15.994 15.994 0 011.62-3.39m3.42 3.42a15.995 15.995 0 004.76-4.65l3.88-5.81a1.15 1.15 0 00-1.6-1.6l-5.81 3.88a15.996 15.996 0 00-4.65 4.76m3.42 3.42a6.776 6.776 0 00-3.42-3.42" />
+    </svg>
+  )
+}

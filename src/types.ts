@@ -41,6 +41,8 @@ export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
 export const DEFAULT_AGENT_MAX_TOOL_ROUNDS = 15
+/** 接口允许的参考图数量上限 */
+export const MAX_INPUT_IMAGES = 16
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
 export type CustomProviderContentType = 'json' | 'multipart'
@@ -100,7 +102,11 @@ export interface ApiProfile {
   provider: ApiProvider
   baseUrl: string
   apiKey: string
+  /** 模型 ID 列表，多个模型以 `, ` 分隔 */
   model: string
+  /** 首页选中的模型；不在列表中时回退到第一个 */
+  selectedModel?: string
+  imageGenerationModel?: string
   timeout: number
   apiMode: ApiMode
   reasoningEffort?: ReasoningEffort
@@ -110,8 +116,48 @@ export interface ApiProfile {
   streamImages?: boolean
   streamPartialImages?: number
   transparentBackgroundMethod: 'api' | 'local'
-  providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'reasoningEffort' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages' | 'transparentBackgroundMethod'>>>>
+  providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'imageGenerationModel' | 'apiMode' | 'reasoningEffort' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages' | 'transparentBackgroundMethod'>>>>
 }
+
+export interface PresetAgentConfig {
+  apiConfigMode?: AgentApiConfigMode
+  textProfileId?: string
+  imageProfileId?: string
+}
+
+export interface PresetConfig {
+  customProviders: CustomProviderDefinition[]
+  profiles: ApiProfile[]
+  agent?: PresetAgentConfig
+}
+
+/** 参考图预览中“编辑图片”按钮的默认行为 */
+export type ReferenceImageEditAction = 'ask' | 'sketch' | 'mask'
+
+/** 仅客户端：下载和导出时每次询问保存位置，还是直接保存到默认保存地址 */
+export type SaveLocationMode = 'ask' | 'default'
+
+/** 重试任务时新建任务，还是覆盖原任务 */
+export type RetryMode = 'new' | 'overwriteFailed' | 'overwriteAll'
+
+/** 字体选择：default 表示使用部署默认（VITE_DEFAULT_UI_FONT / VITE_DEFAULT_MONO_FONT）；builtin 为内置字体，加载来源由 VITE_BUILTIN_FONT_SOURCE 决定 */
+export type FontMode = 'default' | 'builtin' | 'system' | 'custom'
+
+/** 打开画板的请求：baseImageSrc 为空时是空白画板，replaceImageId 表示完成后替换该参考图 */
+export interface SketchBoardRequest {
+  baseImageSrc: string | null
+  replaceImageId?: string
+}
+
+/** 正在进行的批量提交进度 */
+export interface BatchProgress {
+  total: number
+  started: number
+  finished: number
+}
+
+/** 批量提交模式：排队逐条执行，或按并发数同时执行 */
+export type BatchPromptMode = 'queue' | 'concurrent'
 
 export interface AppSettings {
   /** 旧版单配置字段：保留用于导入/查询参数兼容，实际请求以 active profile 为准 */
@@ -130,10 +176,32 @@ export interface AppSettings {
   persistInputOnRestart: boolean
   reuseTaskApiProfileTemporarily: boolean
   alwaysShowRetryButton: boolean
+  retryMode: RetryMode
   allowPromptRewrite: boolean
   taskCompletionNotification: boolean
+  /** 启动时检查 GitHub 上的新版本 */
+  autoCheckUpdate: boolean
+  /** 仅客户端：把警告和错误写入日志文件 */
+  writeLogFile: boolean
   enterSubmit: boolean
+  uiFont: FontMode
+  /** uiFont 为 custom 时使用的本机字体名称 */
+  uiFontName: string
+  monoFont: FontMode
+  /** monoFont 为 custom 时使用的本机字体名称 */
+  monoFontName: string
+  /** 偏好设置：是否在首页提供多提示词批量提交 */
+  showBatchPrompt: boolean
+  /** 多提示词批量提交，提示词之间空两行分隔 */
+  batchPromptEnabled: boolean
+  batchPromptMode: BatchPromptMode
+  /** 并发模式下是否限制并发数（默认开启），关闭时全部同时提交 */
+  batchPromptConcurrencyLimited: boolean
+  batchPromptConcurrency: number
+  referenceImageEditAction: ReferenceImageEditAction
   zipDownloadRoutes: ZipDownloadRoute[]
+  /** 仅客户端：默认保存地址本身由 Rust 侧保存，不在设置中 */
+  saveLocationMode: SaveLocationMode
   agentScrollToBottomAfterSubmit: boolean
   agentMaxToolRounds: number
   agentWebSearch: boolean
@@ -149,7 +217,7 @@ export interface AppSettings {
 
 export interface TaskParams {
   size: string
-  quality: 'auto' | 'low' | 'medium' | 'high'
+  quality: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   output_format: 'png' | 'jpeg' | 'webp'
   output_compression: number | null
   moderation: 'auto' | 'low'
@@ -174,6 +242,13 @@ export interface InputImage {
   id: string
   /** data URL，用于预览 */
   dataUrl: string
+}
+
+/** 参考图上的评论标注，x / y 为相对原图宽高的比例（0~1） */
+export interface ImageComment {
+  x: number
+  y: number
+  text: string
 }
 
 export interface MaskDraft {
@@ -247,6 +322,8 @@ export interface TaskRecord {
   status: TaskStatus
   error: string | null
   createdAt: number
+  /** 本次生成开始时间，重试时不改变原始创建时间 */
+  startedAt?: number
   finishedAt: number | null
   /** 总耗时毫秒 */
   elapsed: number | null
@@ -475,7 +552,7 @@ export interface ExportData {
     index: number
     total: number
   }
-  settings?: AppSettings
+  settings?: Omit<AppSettings, 'customProviders'> & { customProviders?: CustomProviderDefinition[] }
   tasks?: TaskRecord[]
   favoriteCollections?: FavoriteCollection[]
   defaultFavoriteCollectionId?: string | null

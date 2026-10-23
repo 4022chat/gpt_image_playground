@@ -2,10 +2,12 @@ import { useEffect, useState, useRef, type ReactNode } from 'react'
 import type { TaskRecord } from '../types'
 import { useStore, retryTask } from '../store'
 import { ensureImageThumbnailCached, subscribeImageThumbnail } from '../lib/imageCache'
+import { useNearViewport } from '../hooks/useNearViewport'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
-import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
+import { DEFAULT_FAL_MODEL, DEFAULT_IMAGES_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { getTaskPromptText } from '../lib/promptImageMentions'
 import { CodeIcon, TransparentBgIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -87,6 +89,8 @@ export default function TaskCard({
   const swipeDirectionRef = useRef<-1 | 0 | 1>(0)
   const swipeActionActiveRef = useRef(false)
   const cardRef = useRef<HTMLDivElement>(null)
+  // 虚拟列表会多渲染上下各一屏；仍等卡片接近可视区域再读缩略图，快速拖动滚动条时一闪而过的卡片不必读取
+  const nearViewport = useNearViewport(cardRef)
   const swipeOffsetRef = useRef(0)
   const pendingSwipeOffsetRef = useRef(0)
   const swipeFrameRef = useRef<number | null>(null)
@@ -248,6 +252,7 @@ export default function TaskCard({
 
   // 加载缩略图
   useEffect(() => {
+    if (!nearViewport) return
     setCoverRatio('')
     setCoverSize('')
     setThumbSrc('')
@@ -256,9 +261,9 @@ export default function TaskCard({
     const imageId = task.outputImages?.[0]
     let unsubscribe: (() => void) | undefined
 
-    const applyThumbnail = (thumbnail: { dataUrl: string; width?: number; height?: number }) => {
+    const applyThumbnail = (thumbnail: { src: string; width?: number; height?: number }) => {
       if (cancelled) return
-      setThumbSrc(thumbnail.dataUrl)
+      setThumbSrc(thumbnail.src)
       if (thumbnail.width && thumbnail.height) {
         setCoverRatio(formatImageRatio(thumbnail.width, thumbnail.height))
         setCoverSize(`${thumbnail.width}×${thumbnail.height}`)
@@ -279,12 +284,12 @@ export default function TaskCard({
       cancelled = true
       unsubscribe?.()
     }
-  }, [task.outputImages])
+  }, [nearViewport, task.outputImages])
 
   const duration = (() => {
     let seconds: number
     if (task.status === 'running' || task.falRecoverable || task.customRecoverable) {
-      seconds = Math.floor((now - task.createdAt) / 1000)
+      seconds = Math.floor((now - (task.startedAt ?? task.createdAt)) / 1000)
     } else if (task.elapsed != null) {
       seconds = Math.floor(task.elapsed / 1000)
     } else {
@@ -546,7 +551,7 @@ export default function TaskCard({
               </div>
             ) : (
               <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
-                {task.prompt || '(无提示词)'}
+                {getTaskPromptText(task.prompt, task.inputImageIds.length) || '(无提示词)'}
               </p>
             )}
           </div>
@@ -638,7 +643,7 @@ export default function TaskCard({
               onTouchEnd={(e) => e.stopPropagation()}
               onTouchCancel={(e) => e.stopPropagation()}
             >
-              {((task.status === 'error' && !isFalReconnecting) || settings.alwaysShowRetryButton) && (
+              {((task.status === 'error' && !isFalReconnecting && !isCustomReconnecting) || (task.status === 'done' && settings.alwaysShowRetryButton)) && (
                 <TaskActionButton
                   tooltip="重试任务"
                   onClick={() => retryTask(task)}
@@ -714,7 +719,7 @@ export default function TaskCard({
               <TaskActionButton
                 tooltip="删除任务"
                 onClick={onDelete}
-                className="p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-950/30 text-gray-400 hover:text-red-500 transition"
+                className="p-1.5 rounded-md hover:bg-red-500/[0.1] dark:hover:bg-red-500/[0.16] text-gray-400 hover:text-red-600 transition"
               >
                 <svg
                   className="w-4 h-4"
