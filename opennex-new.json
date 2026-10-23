@@ -1,0 +1,46 @@
+{
+  "profiles": [
+    {
+      "id": "opennex-gpt-image",
+      "name": "GPT Image 按量计费",
+      "provider": "openai",
+      "baseUrl": "https://api.opennex.top/v1",
+      "model": "gpt-image-2.5-sunburst,gpt-image-2.5-flare,gpt-image-2",
+      "streamImages": false,
+      "managedBy": "opennex"
+    },
+    {
+      "id": "opennex-gpt-image-c",
+      "name": "GPT Image 按次计费",
+      "provider": "openai",
+      "baseUrl": "https://api.opennex.top/v1",
+      "model": "gpt-image-2.5-sunburst-c,gpt-image-2.5-flare-c,gpt-image-2-c",
+      "streamImages": false,
+      "managedBy": "opennex",
+      "isDefault": true
+    },
+    {
+      "id": "opennex-gemini-nano",
+      "name": "Gemini Nano 香蕉系列",
+      "provider": "gemini",
+      "baseUrl": "https://api.opennex.top",
+      "model": "gemini-nano-banana-2.1,gemini-3-pro-image-preview,gemini-3.1-flash-image-preview",
+      "streamImages": false,
+      "managedBy": "opennex"
+    },   
+    {
+      "id": "opennex-openai-agent",
+      "name": "Agent 文本配置",
+      "provider": "openai",
+      "baseUrl": "https://api.opennex.top/v1",
+      "model": "gpt-6.1-sol,gpt-5.6-sol,gpt-6-astra,claude-opus-5-5",
+      "apiMode": "responses",
+      "managedBy": "opennex"
+    }
+  ],
+  "agent": {
+    "apiConfigMode": "hybrid",
+    "textProfileId": "opennex-openai-agent",
+    "imageProfileId": "opennex-gpt-image-c"
+  }
+}

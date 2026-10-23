@@ -236,7 +236,7 @@ describe('describeImportLink', () => {
     const desc = describeImportLink(parseImportLink(settingsLink({ profiles: [{ ...profile, timeout: 300, codexCli: true, apiMode: 'responses' }] }))!, settings)
     const rows = desc.groups[0].rows
     expect(desc.groups[0].title).toBe('修改配置「P0」')
-    expect(rows).toContainEqual({ label: '请求超时 (秒)', before: { text: '600' }, after: { text: '300' } })
+    expect(rows).toContainEqual({ label: '请求超时 (秒)', before: { text: '1200' }, after: { text: '300' } })
     expect(rows).toContainEqual({ label: 'Codex CLI 兼容模式', before: { text: '关闭', fixed: true }, after: { text: '开启', fixed: true } })
     expect(rows).toContainEqual({ label: 'API 接口', before: { text: 'Images API', fixed: true }, after: { text: 'Responses API', fixed: true } })
     expect(rows.map((item) => item.label)).not.toContain('名称')

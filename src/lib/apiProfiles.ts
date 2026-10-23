@@ -21,6 +21,7 @@ import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, DEFAULT_Z
 import { customProviderSupportsNativeTransparentBackground } from './customProviderCapabilities'
 import { shouldUseApiProxy } from './devProxy'
 import { normalizeReasoningEffort, normalizeStreamPartialImages, parseDefaultApiUrl } from './defaultApiUrl'
+import { getPresetConfig } from './presetConfig'
 import { readRuntimeEnv } from './runtimeEnv'
 import { isImportableConfigUrl } from './importableConfigUrl'
 import { DEFAULT_IMAGES_MODEL } from './imageModels'
@@ -106,14 +107,6 @@ const SUB2API_PROVIDER: CustomProviderDefinition = {
 }
 
 type ApiProfileProviderDraft = NonNullable<ApiProfile['providerDrafts']>[ApiProvider]
-
-const MANAGED_PROFILE_TEMPLATES = [
-  { id: 'managed-gpt-image-2', name: 'GPT Image 2 按量计费', provider: 'openai' as const, baseUrl: OPENAI_DEFAULT_BASE_URL, model: 'gpt-image-2' },
-  { id: 'managed-gpt-image-2-c', name: 'GPT Image 2 按次计费', provider: 'openai' as const, baseUrl: OPENAI_DEFAULT_BASE_URL, model: 'gpt-image-2-c' },
-  { id: 'managed-gemini-3.1-flash-image-preview', name: 'Gemini Flash Image', provider: 'gemini' as const, baseUrl: GEMINI_DEFAULT_BASE_URL, model: 'gemini-3.1-flash-image-preview' },
-  { id: 'managed-gemini-3-pro-image-preview', name: 'Gemini Pro Image', provider: 'gemini' as const, baseUrl: GEMINI_DEFAULT_BASE_URL, model: GEMINI_DEFAULT_MODEL },
-  { id: 'managed-gpt-agent', name: 'GPT Agent 对话', provider: 'openai' as const, baseUrl: OPENAI_DEFAULT_BASE_URL, model: 'gpt-5.6-terra', apiMode: 'responses' as const },
-]
 
 function getDefaultStreamImages(provider: ApiProvider, apiMode: ApiMode): boolean {
   return provider === 'openai' && apiMode === 'responses'
@@ -648,10 +641,19 @@ function validateImportedProfileRecord(input: unknown) {
   }
 }
 
+export function isManagedProfile(profile: ApiProfile) {
+  return profile.managedBy === 'managed' || profile.id.startsWith('opennex-') || profile.name.trim().toLowerCase() === 'opennex'
+}
+
 export function getManagedProfiles(settings: Partial<AppSettings> | unknown): ApiProfile[] {
-  return normalizeSettings(settings).profiles.filter((profile) =>
-    profile.managedBy === 'managed' || profile.id.startsWith('opennex-') || profile.name.trim().toLowerCase() === 'opennex',
-  )
+  return normalizeSettings(settings).profiles.filter(isManagedProfile)
+}
+
+// 托管模板来自部署预置配置（VITE_DEFAULT_API_URL 指向的 JSON），apiKey 由用户本地管理，不随部署同步
+function getManagedProfileTemplates(): Omit<ApiProfile, 'apiKey'>[] {
+  return (getPresetConfig()?.profiles ?? [])
+    .filter((profile) => profile.managedBy === 'managed')
+    .map(({ apiKey: _apiKey, ...template }) => template)
 }
 
 export function ensureManagedProfiles(settings: Partial<AppSettings> | unknown): AppSettings {
@@ -661,7 +663,7 @@ export function ensureManagedProfiles(settings: Partial<AppSettings> | unknown):
   const profileIdMap = new Map<string, string>()
   const usedProfileIds = new Set<string>()
 
-  for (const template of MANAGED_PROFILE_TEMPLATES) {
+  for (const template of getManagedProfileTemplates()) {
     const legacyId = template.id.replace('managed-', 'opennex-')
     const current = existing.find((profile) =>
       !usedProfileIds.has(profile.id) && (profile.id === template.id || profile.id === legacyId || profile.name.trim().toLowerCase() === 'opennex'),
@@ -697,6 +699,94 @@ export function applyManagedApiKey(settings: Partial<AppSettings> | unknown, api
   return normalizeSettings({
     ...normalized,
     profiles: normalized.profiles.map((profile) => profile.managedBy === 'managed' ? { ...profile, apiKey } : profile),
+  })
+}
+
+// 判断是否为同源部署配置：协议、地址与用途都一致才算同一类型
+function managedProfileMatchKey(profile: ApiProfile) {
+  return `${profile.provider}|${profile.baseUrl.trim().replace(/\/+$/, '')}|${profile.apiMode ?? 'images'}`
+}
+
+// 旧版部署按模型拆分配置，优先用当前部署模板归位；多项可选时用模型交集消歧
+function findManagedProfileTemplate(profile: ApiProfile, templates: ApiProfile[]) {
+  const sameId = templates.find((template) => template.id === profile.id)
+  if (sameId) return sameId
+
+  const candidates = templates.filter((template) => managedProfileMatchKey(template) === managedProfileMatchKey(profile))
+  if (candidates.length <= 1) return candidates[0]
+
+  const models = new Set(splitModelList(profile.model))
+  const overlapped = candidates.filter((template) => splitModelList(template.model).some((model) => models.has(model)))
+  if (overlapped.length === 1) return overlapped[0]
+  return candidates.find((template) => template.isDefault === true)
+}
+
+/**
+ * 把老用户按模型拆开的部署配置合并为部署模板里的多模型配置。
+ * 老配置可能没有 managedBy 标记（旧版部署遗留），因此按 provider + baseUrl + 用途判断是否同源。
+ * 返回 null 表示无需迁移；预置配置未加载时不处理，避免误合并。
+ */
+export function mergeLegacyManagedProfiles(settings: Partial<AppSettings> | unknown): AppSettings | null {
+  const normalized = normalizeSettings(settings)
+  const templates = (getPresetConfig()?.profiles ?? []).filter((profile) => profile.managedBy === 'managed')
+  if (!templates.length) return null
+
+  const templateKeys = new Set(templates.map(managedProfileMatchKey))
+  const legacyProfiles = normalized.profiles.filter((profile) =>
+    isManagedProfile(profile) || templateKeys.has(managedProfileMatchKey(profile)),
+  )
+  if (legacyProfiles.length < 2) return null
+
+  const groups = new Map<string, { template?: ApiProfile; members: ApiProfile[] }>()
+  for (const profile of legacyProfiles) {
+    const template = findManagedProfileTemplate(profile, templates)
+    const key = template ? `preset:${template.id}` : `group:${managedProfileMatchKey(profile)}`
+    const group = groups.get(key) ?? { template, members: [] }
+    group.members.push(profile)
+    groups.set(key, group)
+  }
+
+  const replacements = new Map<string, ApiProfile>()
+  const migratedProfileIds = new Map<string, string>()
+  for (const { template, members } of groups.values()) {
+    const onlyTemplate = members.length === 1 && members[0].id === template?.id
+    if (onlyTemplate || (!template && members.length < 2)) continue
+
+    const models = template ? splitModelList(template.model) : [...new Set(members.flatMap((member) => splitModelList(member.model)))]
+    const apiKey = members.map((member) => member.apiKey).find((key) => key.trim()) ?? ''
+    const selectedModel = members.map((member) => member.selectedModel).find((model) => model && models.includes(model))
+    const base = template ?? members[0]
+    const targetId = base.id
+    const merged: ApiProfile = {
+      ...base,
+      apiKey,
+      ...(template ? {} : { model: models.join(', ') }),
+      ...(selectedModel ? { selectedModel } : {}),
+    }
+
+    for (const member of members) {
+      if (member.id === targetId) continue
+      migratedProfileIds.set(member.id, targetId)
+    }
+    replacements.set(targetId, merged)
+  }
+
+  if (!replacements.size) return null
+
+  const profiles = normalized.profiles
+    .filter((profile) => !migratedProfileIds.has(profile.id))
+    .map((profile) => replacements.get(profile.id) ?? profile)
+  for (const [id, profile] of replacements) {
+    if (!profiles.some((item) => item.id === id)) profiles.push(profile)
+  }
+
+  const migrateId = (id: string | null | undefined) => id ? migratedProfileIds.get(id) ?? id : id
+  return normalizeSettings({
+    ...normalized,
+    profiles,
+    activeProfileId: migrateId(normalized.activeProfileId) ?? normalized.activeProfileId,
+    agentTextProfileId: migrateId(normalized.agentTextProfileId),
+    agentImageProfileId: migrateId(normalized.agentImageProfileId),
   })
 }
 

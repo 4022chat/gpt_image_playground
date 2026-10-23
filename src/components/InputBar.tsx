@@ -21,7 +21,7 @@ import { downloadImageEntriesAsZip, downloadImageIds, formatExportFileTime, getD
 import { pickSaveDir } from '../lib/saveFile'
 import { isTauri } from '../lib/platform'
 import SizePickerModal from './SizePickerModal'
-import Select from './Select'
+import ApiProfileSelect from './ApiProfileSelect'
 import { CloseIcon, CollapseIcon, ExpandIcon, SketchIcon } from './icons'
 import { CommentBadge } from './CommentMarks'
 import ButtonTooltip from './input/buttonTooltip'
@@ -486,24 +486,6 @@ export default function InputBar() {
     : appMode === 'agent'
     ? '画廊批量任务进行中，请等待完成或回到画廊停止后再提交'
     : '批量任务进行中，请等待完成或停止后再提交'
-  const selectableProfiles = settings.profiles.filter((profile) => profile.apiMode === (appMode === 'agent' ? 'responses' : 'images'))
-  const profileOptions = selectableProfiles.map((profile) => ({
-    label: `${profile.model}(${profile.name})`,
-    value: profile.id,
-  }))
-  const selectedProfile = selectableProfiles.some((profile) => profile.id === activeProfile.id)
-    ? activeProfile
-    : selectableProfiles[0] ?? activeProfile
-
-  useEffect(() => {
-    if (selectedProfile.id !== activeProfile.id) setSettings({ activeProfileId: selectedProfile.id })
-  }, [activeProfile.id, selectedProfile.id, setSettings])
-
-  const switchProfile = (value: string | number) => {
-    const profileId = String(value)
-    setSettings({ activeProfileId: profileId })
-    useStore.getState().setReusedTaskApiProfile(null)
-  }
   const promptPlaceholder = batchEnabled
     ? '每条提示词之间空两行分隔，可输入 @ 来指定参考图...'
     : '描述你想生成的图片，可输入 @ 来指定参考图...'
@@ -1960,16 +1942,6 @@ export default function InputBar() {
             <div className="hidden sm:flex items-center justify-between gap-3">
               {renderParams()}
 
-              <div className="w-48 shrink-0 mb-0.5">
-                <Select
-                  value={selectedProfile.id}
-                  onChange={switchProfile}
-                  options={profileOptions}
-                  showValueTooltips
-                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm text-gray-700 dark:text-gray-200 outline-none"
-                />
-              </div>
-
               <div className="flex gap-2 flex-shrink-0 mb-0.5">
                 {renderAddImageButton(false)}
                 <div
@@ -2010,13 +1982,7 @@ export default function InputBar() {
                 <div className="collapse-inner">
                   {renderParams()}
                   <div className="mt-2">
-                    <Select
-                      value={selectedProfile.id}
-                      onChange={switchProfile}
-                      options={profileOptions}
-                      showValueTooltips
-                      className="w-full px-3 py-2.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm text-gray-700 dark:text-gray-200 outline-none"
-                    />
+                    <ApiProfileSelect triggerClassName="px-3 py-2.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm text-gray-700 dark:text-gray-200" />
                   </div>
                   <div className="h-2" />
                 </div>

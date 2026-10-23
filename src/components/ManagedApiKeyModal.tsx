@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store'
-import { applyManagedApiKey, getManagedProfiles } from '../lib/apiProfiles'
+import { applyManagedApiKey, getManagedProfiles, mergeLegacyManagedProfiles } from '../lib/apiProfiles'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import AccountQrModal from './AccountQrModal'
 
@@ -19,6 +19,12 @@ export default function ManagedApiKeyModal() {
   const [showCustomerQrModal, setShowCustomerQrModal] = useState(false)
 
   usePreventBackgroundScroll(visible)
+
+  useEffect(() => {
+    // 部署配置升级为多模型后，把老用户按模型拆开的配置归并到新模板
+    const merged = mergeLegacyManagedProfiles(settings)
+    if (merged) setSettings(merged)
+  }, [settings, setSettings])
 
   useEffect(() => {
     if (!visible) return

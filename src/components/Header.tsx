@@ -11,6 +11,7 @@ import HelpModal from './HelpModal'
 import HistoryModal from './HistoryModal'
 import AccountQrModal from './AccountQrModal'
 import BalanceButton from './BalanceButton'
+import ApiProfileSelect from './ApiProfileSelect'
 import { useFavoriteCollectionTitle } from './FavoriteCollections'
 import { DesktopDownloadIcon, EditIcon, HelpCircleIcon, HistoryIcon, InstallIcon, SettingsIcon } from './icons'
 
@@ -199,6 +200,9 @@ export default function Header() {
                 </button>
               )}
             </h1>
+            <div className="hidden sm:block w-32 md:w-40 lg:w-48 shrink-0">
+              <ApiProfileSelect triggerClassName="px-2.5 py-2 rounded-lg border border-transparent bg-black/[0.04] hover:bg-black/[0.07] dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-xs text-gray-600 dark:text-gray-300 transition-colors" />
+            </div>
             {appMode === 'agent' && <div className="hidden sm:flex items-center gap-1 relative">
               <button
                 ref={historyButtonRef}

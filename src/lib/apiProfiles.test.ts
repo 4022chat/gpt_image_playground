@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import opennexImageConfigJson from '../../opennex-image.json?raw'
+import opennexNewConfigJson from '../../opennex-new.json?raw'
 import {
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
@@ -6,15 +8,19 @@ import {
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_OPENAI_PROFILE_ID,
   DEFAULT_SETTINGS,
+  applyManagedApiKey,
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
+  ensureManagedProfiles,
   getApiProviderLabel,
   getActiveApiProfile,
   getCustomProviderDefinition,
+  getManagedProfiles,
   findEquivalentApiProfile,
   importCustomProviderDefinitionFromJson,
   importCustomProviderSettingsFromJson,
   getDefaultApiProfileId,
+  mergeLegacyManagedProfiles,
   mergePresetImportedSettings as mergeDefaultImportedSettings,
   mergeImportedSettings,
   normalizeApiProfile,
@@ -25,6 +31,7 @@ import {
   validateApiProfile,
 } from './apiProfiles'
 import { CUSTOM_PROVIDER_LLM_PROMPT, DEFAULT_CUSTOM_PROVIDER_JSON } from './settingsCustomProvider'
+import { setPresetConfig } from './presetConfig'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -1734,5 +1741,98 @@ describe('model list', () => {
   it('returns the selected model for the active profile', () => {
     const profile = normalizeApiProfile({ id: 'p1', model: 'a,b', selectedModel: 'b' })
     expect(getActiveApiProfile({ profiles: [profile], activeProfileId: 'p1' }).model).toBe('b')
+  })
+})
+
+describe('opennex-image.json deployment config', () => {
+  it('is a valid deployment preset config carrying managed profiles', () => {
+    const imported = importCustomProviderSettingsFromJson(opennexImageConfigJson, [], { deploymentConfig: true })
+
+    expect(imported.customProviders).toEqual([])
+    expect(imported.profiles.length).toBeGreaterThan(0)
+    expect(imported.profiles.every((profile) => profile.managedBy === 'managed')).toBe(true)
+    expect(imported.profiles.filter((profile) => profile.isDefault)).toHaveLength(1)
+  })
+
+  it('seeds managed profiles and applies the unified API key', () => {
+    const imported = importCustomProviderSettingsFromJson(opennexImageConfigJson, [], { deploymentConfig: true })
+    setPresetConfig(imported)
+
+    const ensured = ensureManagedProfiles(DEFAULT_SETTINGS)
+    const managed = getManagedProfiles(ensured)
+    expect(managed.map((profile) => profile.id)).toEqual(imported.profiles.map((profile) => profile.id))
+    expect(managed.every((profile) => !profile.apiKey.trim())).toBe(true)
+
+    const applied = applyManagedApiKey(ensured, 'test-key')
+    expect(getManagedProfiles(applied).every((profile) => profile.apiKey === 'test-key')).toBe(true)
+
+    setPresetConfig(null)
+  })
+})
+
+describe('mergeLegacyManagedProfiles', () => {
+  it('merges per-model legacy profiles into multi-model deployment templates', () => {
+    const legacy = importCustomProviderSettingsFromJson(opennexImageConfigJson, [], { deploymentConfig: true })
+    const legacySettings = applyManagedApiKey({
+      ...DEFAULT_SETTINGS,
+      profiles: legacy.profiles,
+      activeProfileId: 'managed-gpt-image-2',
+      agentTextProfileId: 'managed-gpt-agent',
+    }, 'legacy-key')
+
+    setPresetConfig(importCustomProviderSettingsFromJson(opennexNewConfigJson, [], { deploymentConfig: true }))
+    const merged = mergeLegacyManagedProfiles(legacySettings)
+    setPresetConfig(null)
+
+    expect(merged).not.toBeNull()
+    const profiles = getManagedProfiles(merged!)
+    expect(profiles.map((profile) => profile.id).sort()).toEqual([
+      'opennex-gemini-nano',
+      'opennex-gpt-image',
+      'opennex-gpt-image-c',
+      'opennex-openai-agent',
+    ])
+    expect(profiles.every((profile) => profile.apiKey === 'legacy-key')).toBe(true)
+    expect(profiles.find((profile) => profile.id === 'opennex-gpt-image')?.model)
+      .toBe('gpt-image-2.5-sunburst, gpt-image-2.5-flare, gpt-image-2')
+    expect(merged?.activeProfileId).toBe('opennex-gpt-image')
+    expect(merged?.agentTextProfileId).toBe('opennex-openai-agent')
+  })
+
+  it('merges legacy profiles without managedBy by matching provider and baseUrl', () => {
+    const legacySettings = {
+      ...DEFAULT_SETTINGS,
+      profiles: [
+        { id: 'legacy-charge', name: 'GPT Image 2 按量计费', provider: 'openai', baseUrl: 'https://api.opennex.top/v1', model: 'gpt-image-2', apiKey: 'legacy-key' },
+        { id: 'legacy-count', name: 'GPT Image 2 按次计费', provider: 'openai', baseUrl: 'https://api.opennex.top/v1', model: 'gpt-image-2-c', apiKey: 'legacy-key' },
+        { id: 'legacy-gemini', name: 'Gemini Pro Image', provider: 'gemini', baseUrl: 'https://api.opennex.top', model: 'gemini-3-pro-image-preview', apiKey: 'legacy-key' },
+        { id: 'custom-local', name: '本地自建', provider: 'openai', baseUrl: 'https://example.com/v1', model: 'gpt-image-1', apiKey: 'own-key' },
+      ],
+      activeProfileId: 'legacy-charge',
+    }
+
+    setPresetConfig(importCustomProviderSettingsFromJson(opennexNewConfigJson, [], { deploymentConfig: true }))
+    const merged = mergeLegacyManagedProfiles(legacySettings)
+    setPresetConfig(null)
+
+    expect(merged).not.toBeNull()
+    expect(merged!.profiles.map((profile) => profile.id).sort()).toEqual([
+      'custom-local',
+      'opennex-gemini-nano',
+      'opennex-gpt-image',
+      'opennex-gpt-image-c',
+    ])
+    expect(merged!.profiles.find((profile) => profile.id === 'opennex-gpt-image')?.apiKey).toBe('legacy-key')
+    expect(merged!.profiles.find((profile) => profile.id === 'custom-local')?.apiKey).toBe('own-key')
+    expect(merged!.activeProfileId).toBe('opennex-gpt-image')
+  })
+
+  it('returns null when managed profiles are already merged', () => {
+    const legacy = importCustomProviderSettingsFromJson(opennexImageConfigJson, [], { deploymentConfig: true })
+    const legacySettings = applyManagedApiKey({ ...DEFAULT_SETTINGS, profiles: legacy.profiles }, 'legacy-key')
+    setPresetConfig(importCustomProviderSettingsFromJson(opennexNewConfigJson, [], { deploymentConfig: true }))
+    const merged = mergeLegacyManagedProfiles(legacySettings)!
+    expect(mergeLegacyManagedProfiles(merged)).toBeNull()
+    setPresetConfig(null)
   })
 })

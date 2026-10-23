@@ -1,0 +1,52 @@
+{
+  "customProviders": [],
+  "profiles": [
+    {
+      "id": "managed-gpt-image-2",
+      "name": "GPT Image 2 按量计费",
+      "provider": "openai",
+      "baseUrl": "https://api.opennex.top/v1",
+      "model": "gpt-image-2",
+      "streamImages": false,
+      "managedBy": "managed",
+      "isDefault": true
+    },
+    {
+      "id": "managed-gpt-image-2-c",
+      "name": "GPT Image 2 按次计费",
+      "provider": "openai",
+      "baseUrl": "https://api.opennex.top/v1",
+      "model": "gpt-image-2-c",
+      "streamImages": false,
+      "managedBy": "managed"
+    },
+    {
+      "id": "managed-gemini-3.1-flash-image-preview",
+      "name": "Gemini Flash Image",
+      "provider": "gemini",
+      "baseUrl": "https://api.opennex.top",
+      "model": "gemini-3.1-flash-image-preview",
+      "streamImages": false,
+      "managedBy": "managed"
+    },
+    {
+      "id": "managed-gemini-3-pro-image-preview",
+      "name": "Gemini Pro Image",
+      "provider": "gemini",
+      "baseUrl": "https://api.opennex.top",
+      "model": "gemini-3-pro-image-preview",
+      "streamImages": false,
+      "managedBy": "managed"
+    },
+    {
+      "id": "managed-gpt-agent",
+      "name": "GPT Agent 对话",
+      "provider": "openai",
+      "baseUrl": "https://api.opennex.top/v1",
+      "model": "gpt-5.6-terra",
+      "apiMode": "responses",
+      "streamImages": false,
+      "managedBy": "managed"
+    }
+  ]
+}
