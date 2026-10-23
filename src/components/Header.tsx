@@ -312,7 +312,7 @@ export default function Header() {
                 className="relative hidden sm:block"
                 {...clientTooltip.handlers}
               >
-                <a
+                {/* <a
                   href={`${RELEASES_PAGE_URL}/latest`}
                   target="_blank"
                   rel="noopener noreferrer"
@@ -324,7 +324,7 @@ export default function Header() {
                 </a>
                 <ViewportTooltip visible={clientTooltip.visible} className="whitespace-nowrap">
                   下载客户端
-                </ViewportTooltip>
+                </ViewportTooltip> */}
               </div>
             )}
             <div
