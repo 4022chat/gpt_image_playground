@@ -668,11 +668,22 @@ export function ensureManagedProfiles(settings: Partial<AppSettings> | unknown):
     const current = existing.find((profile) =>
       !usedProfileIds.has(profile.id) && (profile.id === template.id || profile.id === legacyId || profile.name.trim().toLowerCase() === 'opennex'),
     )
+    // 新配置沿用同源老配置的 Key，部署升级后不必让用户重新填写
+    const inherited = current?.apiKey.trim()
+      ? undefined
+      : normalized.profiles.find((profile) =>
+          profile.apiKey.trim() && managedProfileMatchKey(profile) === managedProfileMatchKey(template),
+        )
     const profile = current
-      ? { ...current, ...template, managedBy: 'managed' as const }
+      ? {
+          ...current,
+          ...template,
+          managedBy: 'managed' as const,
+          ...(inherited ? { apiKey: inherited.apiKey } : {}),
+        }
       : (template.provider === 'gemini'
-        ? createDefaultGeminiProfile({ ...template, managedBy: 'managed' })
-        : createDefaultOpenAIProfile({ ...template, managedBy: 'managed', apiMode: template.apiMode ?? 'images', streamImages: false }))
+        ? createDefaultGeminiProfile({ ...template, managedBy: 'managed', ...(inherited ? { apiKey: inherited.apiKey } : {}) })
+        : createDefaultOpenAIProfile({ ...template, managedBy: 'managed', apiMode: template.apiMode ?? 'images', streamImages: false, ...(inherited ? { apiKey: inherited.apiKey } : {}) }))
     const index = current ? profiles.findIndex((item) => item.id === current.id) : -1
 
     if (current && index >= 0) {
@@ -698,12 +709,15 @@ export function applyManagedApiKey(settings: Partial<AppSettings> | unknown, api
   const normalized = ensureManagedProfiles(settings)
   return normalizeSettings({
     ...normalized,
-    profiles: normalized.profiles.map((profile) => profile.managedBy === 'managed' ? { ...profile, apiKey } : profile),
+    // 以 isManagedProfile 为准，id 为 opennex-* 的老配置同样写入 Key，避免弹窗反复要求填写
+    profiles: normalized.profiles.map((profile) =>
+      isManagedProfile(profile) ? { ...profile, apiKey, managedBy: 'managed' as const } : profile,
+    ),
   })
 }
 
 // 判断是否为同源部署配置：协议、地址与用途都一致才算同一类型
-function managedProfileMatchKey(profile: ApiProfile) {
+function managedProfileMatchKey(profile: Pick<ApiProfile, 'provider' | 'baseUrl' | 'apiMode'>) {
   return `${profile.provider}|${profile.baseUrl.trim().replace(/\/+$/, '')}|${profile.apiMode ?? 'images'}`
 }
 

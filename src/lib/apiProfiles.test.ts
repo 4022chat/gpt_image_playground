@@ -1768,6 +1768,33 @@ describe('opennex-image.json deployment config', () => {
 
     setPresetConfig(null)
   })
+
+  it('applies the key to opennex-* profiles that lost the managedBy flag', () => {
+    setPresetConfig(null)
+    const settings = normalizeSettings({
+      profiles: [{ id: 'opennex-legacy-image', name: 'GPT Image 2 老配置', provider: 'openai', baseUrl: 'https://api.opennex.top/v1', model: 'gpt-image-2' }],
+    })
+
+    const applied = applyManagedApiKey(settings, 'typed-key')
+
+    expect(getManagedProfiles(applied).map((profile) => [profile.id, profile.apiKey, profile.managedBy])).toEqual([
+      ['opennex-legacy-image', 'typed-key', 'managed'],
+    ])
+  })
+
+  it('inherits the key from a same-source legacy profile when seeding templates', () => {
+    setPresetConfig(importCustomProviderSettingsFromJson(opennexNewConfigJson, [], { deploymentConfig: true }))
+    const settings = normalizeSettings({
+      profiles: [{ id: 'legacy-image', name: '老配置', provider: 'openai', baseUrl: 'https://api.opennex.top/v1', model: 'gpt-image-2', apiKey: 'old-key' }],
+    })
+
+    const ensured = ensureManagedProfiles(settings)
+    setPresetConfig(null)
+
+    expect(ensured.profiles.find((profile) => profile.id === 'opennex-gpt-image')?.apiKey).toBe('old-key')
+    expect(ensured.profiles.find((profile) => profile.id === 'opennex-gpt-image-c')?.apiKey).toBe('old-key')
+    expect(ensured.profiles.find((profile) => profile.id === 'opennex-gemini-nano')?.apiKey).toBe('')
+  })
 })
 
 describe('mergeLegacyManagedProfiles', () => {

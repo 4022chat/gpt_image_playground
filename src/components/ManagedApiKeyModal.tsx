@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store'
 import { applyManagedApiKey, getManagedProfiles, mergeLegacyManagedProfiles } from '../lib/apiProfiles'
@@ -12,7 +12,9 @@ export default function ManagedApiKeyModal() {
   const modalOpen = useStore((s) => s.managedApiKeyModalOpen)
   const setModalOpen = useStore((s) => s.setManagedApiKeyModalOpen)
   const inputRef = useRef<HTMLInputElement>(null)
-  const managedProfiles = getManagedProfiles(settings)
+  // 迁移在渲染阶段先算出来，避免新配置的 Key 已能从老配置继承时仍先弹一次填写框
+  const migrated = useMemo(() => mergeLegacyManagedProfiles(settings), [settings])
+  const managedProfiles = getManagedProfiles(migrated ?? settings)
   const profile = managedProfiles.find((item) => !item.apiKey.trim())
   const visible = !showSettings && (modalOpen || Boolean(profile))
   const [apiKey, setApiKey] = useState('')
@@ -22,9 +24,8 @@ export default function ManagedApiKeyModal() {
 
   useEffect(() => {
     // 部署配置升级为多模型后，把老用户按模型拆开的配置归并到新模板
-    const merged = mergeLegacyManagedProfiles(settings)
-    if (merged) setSettings(merged)
-  }, [settings, setSettings])
+    if (migrated) setSettings(migrated)
+  }, [migrated, setSettings])
 
   useEffect(() => {
     if (!visible) return
@@ -38,7 +39,8 @@ export default function ManagedApiKeyModal() {
     const value = apiKey.trim()
     if (!value) return
 
-    setSettings(applyManagedApiKey(settings, value))
+    // 读取最新状态，避免用迁移前的旧快照覆盖刚合并的配置
+    setSettings(applyManagedApiKey(useStore.getState().settings, value))
     setModalOpen(false)
   }
 
